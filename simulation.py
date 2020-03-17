@@ -21,7 +21,9 @@ import stdpopsim
 
 import base
 
+
 Stats = collections.namedtuple('Stats', ['time', 'num_edges', 'kc'])
+
 
 def stat_compare(ts, tsinfer_module, use_position=False):
     """
@@ -49,23 +51,30 @@ def stat_compare(ts, tsinfer_module, use_position=False):
         time=end - start,
         num_edges=inferred.num_edges,
         kc=base.ts_kc(ts, inferred))
-    
-    
+
+
 if __name__ == "__main__":
     reps = 60
     commits = [V_0_1_4, "03ad4bd"]
-    data = collections.defaultdict(list)
-    for commit in commits:
-        tsinfer_module = base.import_tsinfer(commit)
-        for seed in tqdm.trange(1, reps, desc = commit):
-            ts = msprime.simulate(
-                30, recombination_rate=10, mutation_rate=10, random_seed=seed)
-            stats = stat_compare(ts, tsinfer_module, use_position=False)
-            data[commit].append(stats)
-    diffs = []
-    for d1, d2 in zip(data[commits[0]], data[commits[1]]):
-        diffs.append(Stats(*[(a - b) for a, b in zip(d1, d2)]))
-
-    df = pd.DataFrame(diffs, columns = Stats._fields)
-    print("== {}-{} diffs ==".format(*commits))
-    print(pd.DataFrame.from_dict({"mean": df.mean(axis=0), "stderr":df.sem(axis=0)}))
+    for use_position in (True, False):
+        data = collections.defaultdict(list)
+        for commit in commits:
+            tsinfer_module = base.import_tsinfer(commit)
+            for seed in tqdm.trange(1, reps, desc = commit):
+                ts = msprime.simulate(
+                    30, recombination_rate=10, mutation_rate=10, random_seed=seed)
+                stats = stat_compare(ts, tsinfer_module, use_position=use_position)
+                data[commit].append(stats)
+        diffs = []
+        for d1, d2 in zip(data[commits[0]], data[commits[1]]):
+            diffs.append(Stats(*[(a - b) for a, b in zip(d1, d2)]))
+        df_0 = pd.DataFrame(data[commits[0]], columns = Stats._fields)
+        df_1 = pd.DataFrame(data[commits[1]], columns = Stats._fields)
+        df_diff = pd.DataFrame(diffs, columns = Stats._fields)
+        print("== {}-{} diffs {} positional info ==".format(
+            commits[0], commits[1], "with" if use_position else "without"))
+        print(pd.DataFrame.from_dict({
+            "mean_diff": df_diff.mean(axis=0), "stderr_diff": df_diff.sem(axis=0),
+            ("mean_"+commits[0]): df_0.mean(axis=0), ("stderr_"+commits[0]): df_0.sem(axis=0),
+            ("mean_"+commits[1]): df_1.mean(axis=0), ("stderr_"+commits[1]): df_1.sem(axis=0)
+            }))
