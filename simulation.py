@@ -2,7 +2,6 @@
 Run standard simulations, both vanilla and from stdpopsim
 
 Compare: # edges, % compression, kc_distance
-
 """
 V_0_1_4 = "efbafff"  # commit hash of tsinfer v 0.1.4
 
@@ -12,6 +11,7 @@ import sys
 import collections
 import time
 import inspect
+import argparse
 
 import tqdm
 import numpy as np
@@ -54,6 +54,7 @@ def stat_compare(ts, tsinfer_module, use_position=False):
 
 
 if __name__ == "__main__":
+    
     reps = 60
     commits = [V_0_1_4, "03ad4bd"]
     for use_position in (True, False):
@@ -67,14 +68,10 @@ if __name__ == "__main__":
                 data[commit].append(stats)
         diffs = []
         for d1, d2 in zip(data[commits[0]], data[commits[1]]):
-            diffs.append(Stats(*[(a - b) for a, b in zip(d1, d2)]))
-        df_0 = pd.DataFrame(data[commits[0]], columns = Stats._fields)
-        df_1 = pd.DataFrame(data[commits[1]], columns = Stats._fields)
-        df_diff = pd.DataFrame(diffs, columns = Stats._fields)
-        print("== {}-{} diffs {} positional info ==".format(
+            diffs.append(Stats(*[(a / b) for a, b in zip(d1, d2)]))
+        df_diff = pd.DataFrame(diffs, columns = Stats._fields) * 100
+        print("== {} vs {} {} positional info ==".format(
             commits[0], commits[1], "with" if use_position else "without"))
         print(pd.DataFrame.from_dict({
-            "mean_diff": df_diff.mean(axis=0), "stderr_diff": df_diff.sem(axis=0),
-            ("mean_"+commits[0]): df_0.mean(axis=0), ("stderr_"+commits[0]): df_0.sem(axis=0),
-            ("mean_"+commits[1]): df_1.mean(axis=0), ("stderr_"+commits[1]): df_1.sem(axis=0)
+            "percent_change": df_diff.mean(axis=0), "stderr": df_diff.sem(axis=0)
             }))
