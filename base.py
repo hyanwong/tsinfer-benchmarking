@@ -16,39 +16,54 @@ def version_location():
 def check_version(repo, commit, commitkey_len=None):
     """
     E.g. check_version('http://github.com/tskit-dev/tsinfer', 'efbafff')
-    Check that this module is installed, and return the installation dir
+    Check that this module is installed, and return the installation dir and short commit hash.
+    
+    If `commit`=='' then we download and save under libname_
+    and don't check the commit hash
     """
+    
     if commitkey_len is not None:
         commit = commit[:commitkey_len]
     libname = repo.split("/")[-1]
-    dirname = libname + "_" + commit
+    dirname = libname + "_" + (commit or '') 
     fulldir = os.path.join(version_location(), dirname)
     if os.path.isdir(fulldir):
         # already installed - check the right commit
         logging.debug("Already installed", commit, ": checking")
+        if commit == "master":
+            subprocess.call(["git", "fetch", "origin"], cwd=fulldir)
+            subprocess.call(["git", "reset", "--hard", "origin/master"], cwd=fulldir)
         retcommit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=fulldir)
         retcommit = str(retcommit, "utf-8").strip()  # In case it is a byte string
-        assert commit.startswith(retcommit)
+        if commit in ('master', ''):
+            return fulldir, retcommit
+        else:
+            assert commit.startswith(retcommit)
     else:
         # install the repo and check out the right commit
         retcode = subprocess.call(["git", "clone", "--recursive", repo,  fulldir])
         assert os.path.isdir(fulldir)
         assert retcode == 0
-        retcode = subprocess.call(["git", "checkout", commit], cwd=fulldir)
-        assert retcode == 0
+        if commit:
+            retcode = subprocess.call(["git", "checkout", commit], cwd=fulldir)
+            assert retcode == 0
         retcode = subprocess.call(["make"], cwd=fulldir)
         assert retcode == 0
-    return fulldir
+        retcommit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=fulldir)
+        retcommit = str(retcommit, "utf-8").strip()  # In case it is a byte string
+    return fulldir, retcommit
 
 def check_tsinfer_version(commit):
     return check_version('http://github.com/tskit-dev/tsinfer', commit, commitkey_len=7)
     
 def import_tsinfer(commit):
     """
-    Return the name of the library loaded
+    Import a specific commit version of tsinfer, and return the name of the library
+    loaded and the short commit hash. If '', do not check the commit hash.
     """
     oldpath = sys.path
-    sys.path = [check_tsinfer_version(commit)] + oldpath
+    fulldir, commithash = check_tsinfer_version(commit)
+    sys.path = [fulldir] + oldpath
     to_del = []
     for name, module in sys.modules.items():
         try:
@@ -60,7 +75,7 @@ def import_tsinfer(commit):
         del sys.modules[name]
     modulename = importlib.import_module('tsinfer')
     sys.path = oldpath
-    return modulename
+    return modulename, commithash
 
 
 def ts_kc(ts1, ts2):
