@@ -114,14 +114,19 @@ def setup_simulation(ts, prefix, cheat_recombination=False):
         ts, use_times=False)
     # could inject error in here e.g.
     # sample_data = plain_samples.add_errors(..., path=***)
+    if cheat_recombination:
+        prefix += "cheat"
     sd = plain_samples.copy(path=prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
     if cheat_recombination:
-        breakpoint_positions = np.array(list(ts.breakpoints()))[1:-1]
+        breakpoint_positions = np.array(list(ts.breakpoints()))
         inference_positions = sd.sites_position[:][sd.sites_inference[:] == 1]
         breakpoints = np.searchsorted(inference_positions, breakpoint_positions)
+        # Any after the last inference position must be junked
+        # (those before the first inference position make no difference)
+        breakpoints = breakpoints[breakpoints != len(rho)]
         rho[breakpoints] *= 20
     return sd, rho, prefix, ts
 
@@ -212,7 +217,6 @@ def run_replicate(seed):
     samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
     #samples, rho, prefix, ts = setup_simulation(*simulate_human(seed), cheat_recombination=True)
     #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
-    prefix += "cheat"
     
     if ts is not None:
         ts.dump(prefix + ".trees")
