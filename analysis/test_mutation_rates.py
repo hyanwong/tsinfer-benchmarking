@@ -156,7 +156,7 @@ def run(params):
     Run a single inference, with the specified rates
     """
     base_rec_prob = np.mean(params.rec_rate[1:])
-    print(f"Starting {} {} with mean rho {}".format(
+    print("Starting {} {} with mean rho {}".format(
         params.ma_mut_rate, params.ms_mut_rate, base_rec_prob))
     prefix = None
     if params.sample_data.path is not None:
@@ -236,10 +236,11 @@ def run_replicate(seed):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-r", "--replicates", type=int, default=1)
-    parser.add_argument("-s", "--sequencing-error", type=float, default=0,
+    parser.add_argument("-s", "--random_seed", type=int, default=123)
+    parser.add_argument("-e", "--sequencing_error", type=float, default=0,
         help="Add some sequencing error to the haplotypes before inferring")
     args = parser.parse_args()
     
 
     for rep in range(args.replicates):
-        run_replicate(rep+123)
+        run_replicate(rep+args.random_seed)
