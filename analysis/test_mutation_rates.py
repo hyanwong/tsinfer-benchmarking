@@ -2,14 +2,16 @@
 Test the quality of inference, measured by num edges + num mutations, and (if
 using simulated data) the KC distance
 """
+import os.path
 import argparse
 import collections
-import msprime
+import multiprocessing
 
+import msprime
+import tskit
 import numpy as np
 import stdpopsim #  Requires a version of msprime which allows gene conversion
 import tsinfer
-import multiprocessing
 
 def simulate_human(random_seed=123):
     species = stdpopsim.get_species("HomSap")
@@ -132,11 +134,11 @@ def setup_TGP_chr20(prefix):
 
 Params = collections.namedtuple(
     "Params",
-    "ts, sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, n_threads")
+    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, n_threads")
 
 Results = collections.namedtuple(
     "Results",
-    "ma_mut, ms_mut, kc, edges, muts")
+    "ts_file ma_mut, ms_mut, edges, muts")
 
     
 def run(params):
@@ -177,15 +179,12 @@ def run(params):
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
     print(f"ms for {params.ma_mut_rate} {params.ms_mut_rate}")
-    inferred_ts.dump(path=prefix + ".trees")
-    kc = None
-    if params.ts:
-        # If this is from a simulation
-        kc = params.ts.kc_distance(inferred_ts.simplify())
+    ts_file = prefix + ".trees"
+    inferred_ts.dump(path=ts_file)
     return Results(
+        ts_file=ts_file,
         ma_mut=params.ma_mut_rate,
         ms_mut=params.ms_mut_rate,
-        kc=kc,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations)
 
@@ -197,24 +196,41 @@ def run_replicate(seed):
     samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
     #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
 
+    extra_cols = []
     if ts is not None:
         ts.dump(prefix + ".ts")
-
+        extra_cols.append('kc')
+    
     # Set up the range of params for multiprocessing
     errs = np.array([0.5, 0.1, 0.05, 0.01, 0.005, 0.001])
     rel_muts = np.array([2, 1, 0.5, 0.1, 0.01, 0.001])
     param_iter = (
-        Params(ts, samples, rho, m*e, e, 11, 2) for e in errs for m in rel_muts)
+        Params(samples, rho, m*e, e, 11, 2) for e in errs for m in rel_muts)
     with open(prefix + ".results", "wt") as file:
-        print("\t".join(Results._fields), file=file, flush=True)
+        cols = list(Results._fields) + extra_cols
+        print("\t".join(cols), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
-            for row in pool.imap_unordered(run, param_iter):
+            for result in pool.imap_unordered(run, param_iter):
                 # Save to a results file.
                 # NB this can be pasted into R and plotted using
                 # d <- read.table(stdin(), header=T)
                 # d$rel_ma <- factor(d$ma_mut / d$ms_mut)
                 # ggplot() + geom_line(data = d, aes(x = ms_mut, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
-                print("\t".join([str(r) for r in row]), file=file, flush=True)
+                output = []
+                inferred_ts = None
+                for name, val in zip(Results._fields, result):
+                    if name=="ts_file":
+                        sz = os.path.getsize(val)
+                        inferred_ts = tskit.load(val)
+                        output.append(sz)
+                    else:
+                        output.append(val)
+                for name in extra_cols:
+                    if name == "kc":
+                        output.append(ts.kc_distance(inferred_ts.simplify()))
+                    else:
+                        assert False
+                print("\t".join(str(o) for o in output), file=file, flush=True)
 
 
 if __name__ == "__main__":
