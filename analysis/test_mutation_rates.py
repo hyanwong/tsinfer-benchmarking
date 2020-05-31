@@ -158,18 +158,21 @@ def run(params):
         params.sample_data,
         path=None if prefix is None else prefix + ".ancestors",
     )
+    print(f"ga for {params.ma_mut_rate} {params.ms_mut_rate}")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
+    print(f"ma for {params.ma_mut_rate} {params.ms_mut_rate}")
     inferred_anc_ts.dump(path=prefix + ".ancestors.trees")
     inferred_ts = tsinfer.match_samples(
         params.sample_data, inferred_anc_ts,
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
+    print(f"ms for {params.ma_mut_rate} {params.ms_mut_rate}")
     inferred_ts.dump(path=prefix + ".trees")
     kc = None
     if params.ts:
@@ -188,7 +191,7 @@ def run_replicate(seed):
     The main function that runs a parameter set
     """
     #samples, rho, prefix, ts = setup_simulation(*test_sim(seed))
-    samples, rho, prefix, ts = setup_simulation(setup_TGP_chr20("data/1kg_chr20_small"))
+    samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
 
     if ts is not None:
         ts.dump(prefix + ".ts")
