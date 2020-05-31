@@ -39,9 +39,6 @@ def test_sim(seed):
         random_seed=seed)
     return ts, f"data/test_sim{seed}"
 
-def TGP_chr20():
-    pass
-
 def make_seq_errors_genotype_model(g, error_probs):
     """
     Given an empirically estimated error probability matrix, resample for a particular
@@ -93,6 +90,44 @@ def add_errors(sample_data, ancestral_allele_error=0):
             aa_error_by_site, sample_data.sites_genotypes[:])):
         if ancestral_allele_error:
             new_sd.data["sites/genotypes"][i, :] = g
+
+def physical_to_genetic(recombination_map, input_physical_positions):
+    map_pos = recombination_map.get_positions()
+    map_rates = recombination_map.get_rates()
+    map_genetic_positions = np.insert(np.cumsum(np.diff(map_pos) * map_rates[:-1]), 0, 0)
+    return np.interp(input_physical_positions, map_pos, map_genetic_positions)
+
+
+def setup_simulation(ts, prefix):
+    """
+    Take the results of a simulation and return a sample data file, the
+    corresponding recombination rate array, a prefix to use for files, and
+    the original tree sequence
+    """
+    plain_samples = tsinfer.SampleData.from_tree_sequence(
+        ts, use_times=False)
+    # could inject error in here e.g.
+    # sample_data = plain_samples.add_errors(..., path=***)
+    sd = plain_samples.copy(path=prefix+".samples")
+    sd.finalise()
+    rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
+    return sd, np.concatenate(([0.0],rho)), prefix, ts
+
+def setup_TGP_chr20(prefix):
+    """
+    Return a Thousand Genomes Project sample data file, the
+    corresponding recombination rate array, a prefix to use for files, and None
+    """
+    sd = tsinfer.load(prefix + ".samples")
+    map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
+    if not map.is_cached():
+        map.download()
+    chr20_map = map.get_chromosome_map("chr20")
+    inference_distances = physical_to_genetic(
+        chr20_map,
+        sd.sites_position[:][sd.sites_inference])
+    rho = np.diff(inference_distances)
+    return sd, np.concatenate(([0.0],rho)), prefix, None
 
 
 Params = collections.namedtuple(
@@ -148,43 +183,12 @@ def run(params):
         muts=inferred_ts.num_mutations)
 
 
-def setup_simulation(ts, prefix):
-    """
-    Take the results of a simulation and return a sample data file, the
-    corresponding recombination rate array, a prefix to use for files, and
-    the original tree sequence
-    """
-    plain_samples = tsinfer.SampleData.from_tree_sequence(
-        ts, use_times=False)
-    # could inject error in here e.g.
-    # sample_data = plain_samples.add_errors(..., path=***)
-    sd = plain_samples.copy(path=prefix+".samples")
-    sd.finalise()
-    rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
-    return sd, np.concatenate(([0.0],rho)), prefix, ts
-
-def setup_TGP_chr20(prefix):
-    """
-    Return a Thousand Genomes Project sample data file, the
-    corresponding recombination rate array, a prefix to use for files, and None
-    """
-    sd = tsinfer.load(prefix + ".samples")
-    map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
-    if not map.is_cached():
-        map.download()
-    chr20_map = map.get_chromosome_map("chr20")
-    inference_distances = chr20_map.physical_to_genetic(
-        sd.sites_position[:][sd.sites_inference])                                         
-    rho = np.diff(inference_distances)
-    return sd, np.concatenate(([0.0],rho)), prefix, None
-    
-
 def run_replicate(seed):
     """
     The main function that runs a parameter set
     """
     #samples, rho, prefix, ts = setup_simulation(*test_sim(seed))
-    samples, rho, prefix, ts = setup_simulation(*test_sim(seed))
+    samples, rho, prefix, ts = setup_simulation(setup_TGP_chr20("data/1kg_chr20_small"))
 
     if ts is not None:
         ts.dump(prefix + ".ts")
@@ -199,8 +203,8 @@ def run_replicate(seed):
         with multiprocessing.Pool(40) as pool:
             for row in pool.imap_unordered(run, param_iter):
                 print("\t".join([str(r) for r in row]), file=file, flush=True)
-                
-    
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-r", "--replicates", type=int, default=1)
