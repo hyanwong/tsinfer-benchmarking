@@ -19,7 +19,7 @@ def simulate_human(random_seed=123):
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(1, 1, 1)
+    samples = model.get_samples(500, 500, 500)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
@@ -100,11 +100,15 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(ts, prefix):
+def setup_simulation(ts, prefix, cheat_recombination=False):
     """
     Take the results of a simulation and return a sample data file, the
     corresponding recombination rate array, a prefix to use for files, and
-    the original tree sequence
+    the original tree sequence.
+    
+    If "cheat_recombination" is true, multiply the recombination_rate for known
+    recombination locations from the simulation by 20
+    
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_times=False)
@@ -113,7 +117,13 @@ def setup_simulation(ts, prefix):
     sd = plain_samples.copy(path=prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
-    return sd, np.concatenate(([0.0],rho)), prefix, ts
+    rho = np.concatenate(([0.0], rho))
+    if cheat_recombination:
+        breakpoint_positions = np.array(list(ts.breakpoints()))[1:-1]
+        inference_positions = sd.sites_position[:][sd.sites_inference[:] == 1]
+        breakpoints = np.searchsorted(inference_positions, breakpoint_positions)
+        rho[breakpoints] *= 20
+    return sd, rho, prefix, ts
 
 def setup_TGP_chr20(prefix):
     """
@@ -128,8 +138,8 @@ def setup_TGP_chr20(prefix):
     inference_distances = physical_to_genetic(
         chr20_map,
         sd.sites_position[:][sd.sites_inference])
-    rho = np.diff(inference_distances)
-    return sd, np.concatenate(([0.0],rho)), prefix, None
+    rho = np.concatenate(([0.0], np.diff(inference_distances)))
+    return sd, rho, prefix, None
 
 
 Params = collections.namedtuple(
@@ -198,8 +208,10 @@ def run_replicate(seed):
     The main function that runs a parameter set
     """
     samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
+    #samples, rho, prefix, ts = setup_simulation(*simulate_human(seed), cheat_recombination=True)
     #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
-
+    prefix += "cheat"
+    
     if ts is not None:
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
