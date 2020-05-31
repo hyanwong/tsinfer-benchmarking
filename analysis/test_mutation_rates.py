@@ -156,6 +156,8 @@ def run(params):
     Run a single inference, with the specified rates
     """
     base_rec_prob = np.mean(params.rec_rate[1:])
+    print(f"Starting {} {} with mean rho {}".format(
+        params.ma_mut_rate, params.ms_mut_rate, base_rec_prob))
     prefix = None
     if params.sample_data.path is not None:
         assert params.sample_data.path.endswith(".samples")
@@ -165,13 +167,12 @@ def run(params):
             params.ma_mut_rate,
             params.ms_mut_rate,
             params.precision)
-    print(f"start GA (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     anc = tsinfer.generate_ancestors(
         params.sample_data,
         num_threads=params.n_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"start MA (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+    print(f"GA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
@@ -180,7 +181,7 @@ def run(params):
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
     inferred_anc_ts.dump(path=inf_prefix + ".ancestors.trees")
-    print(f"start MS (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+    print(f"MA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
@@ -190,6 +191,7 @@ def run(params):
         mutation_rate=base_rec_prob * params.ms_mut_rate)
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
+    print(f"MS done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     try:
         kc = inferred_ts.simplify().kc_distance(tskit.load(prefix+".trees"))
     except tskit.exceptions.FileFormatError:
