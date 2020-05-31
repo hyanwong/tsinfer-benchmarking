@@ -132,7 +132,7 @@ def setup_TGP_chr20(prefix):
 
 Params = collections.namedtuple(
     "Params",
-    "ts, sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision")
+    "ts, sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, n_threads")
 
 Results = collections.namedtuple(
     "Results",
@@ -156,19 +156,23 @@ def run(params):
             params.precision)
     anc = tsinfer.generate_ancestors(
         params.sample_data,
+        num_threads=params.n_threads,
         path=None if prefix is None else prefix + ".ancestors",
     )
     print(f"ga for {params.ma_mut_rate} {params.ms_mut_rate}")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
+        num_threads=params.n_threads,
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
     print(f"ma for {params.ma_mut_rate} {params.ms_mut_rate}")
     inferred_anc_ts.dump(path=prefix + ".ancestors.trees")
     inferred_ts = tsinfer.match_samples(
-        params.sample_data, inferred_anc_ts,
+        params.sample_data,
+        inferred_anc_ts,
+        num_threads=params.n_threads,
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
@@ -200,7 +204,7 @@ def run_replicate(seed):
     errs = np.array([0.5, 0.1, 0.05, 0.01, 0.005, 0.001])
     rel_muts = np.array([2, 1, 0.5, 0.1, 0.01, 0.001])
     param_iter = (
-        Params(ts, samples, rho, m*e, e, 11) for e in errs for m in rel_muts)
+        Params(ts, samples, rho, m*e, e, 11, 2) for e in errs for m in rel_muts)
     with open(prefix + ".results", "wt") as file:
         print("\t".join(Results._fields), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
