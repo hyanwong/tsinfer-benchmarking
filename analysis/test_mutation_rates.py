@@ -194,8 +194,8 @@ def run_replicate(seed):
     """
     The main function that runs a parameter set
     """
-    #samples, rho, prefix, ts = setup_simulation(*test_sim(seed))
-    samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
+    samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
+    #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
 
     if ts is not None:
         ts.dump(prefix + ".ts")
@@ -209,6 +209,11 @@ def run_replicate(seed):
         print("\t".join(Results._fields), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
             for row in pool.imap_unordered(run, param_iter):
+                # Save to a results file.
+                # NB this can be pasted into R and plotted using
+                # d <- read.table(stdin(), header=T)
+                # d$rel_ma <- factor(d$ma_mut / d$ms_mut)
+                # ggplot() + geom_line(data = d, aes(x = ms_mut, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
                 print("\t".join([str(r) for r in row]), file=file, flush=True)
 
 
