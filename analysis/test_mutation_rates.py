@@ -101,7 +101,7 @@ def add_errors(sample_data, ancestral_allele_error=0, **kwargs):
             alleles[i] = list(reversed(alleles[i]))
         genotypes[i, :] = make_seq_errors_genotype_model(
             genotypes[i, :], error_probs)
-        if np.all(genotypes[i, :] == 1) or np.sum(genotypes[i, :] < 2): 
+        if np.all(genotypes[i, :] == 1) or np.sum(genotypes[i, :]) < 2: 
             inference[i] = False
         else:
             inference[i] = True
