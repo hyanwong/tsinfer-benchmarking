@@ -7,6 +7,7 @@ import argparse
 import collections
 import multiprocessing
 
+import pandas as pd
 import msprime
 import tskit
 import numpy as np
@@ -75,23 +76,40 @@ def make_seq_errors_genotype_model(g, error_probs):
     return(np.reshape(genos,-1))
 
     
-def add_errors(sample_data, ancestral_allele_error=0):
+def add_errors(sample_data, ancestral_allele_error=0, **kwargs):
+    if sample_data.num_samples % 2 != 0:
+        raise ValueError("Must have an even number of samples to inject error")
+    error_probs = pd.read_csv("data/EmpiricalErrorPlatinum1000G.csv")
     n_variants = 0
     aa_error_by_site = np.zeros(sample_data.num_sites, dtype=np.bool)
     if ancestral_allele_error > 0:
         assert ancestral_allele_error <= 1
-        n_bad_sites = round(aa_error*sample_data.num_sites)
-        logging.info("Adding ancestral allele polarity error: {}% ({}/{} sites) used in file {}"
-            .format(aa_error * 100, n_bad_sites, ts.num_sites, fn))
+        n_bad_sites = round(ancestral_allele_error*sample_data.num_sites)
         # This gives *exactly* a proportion aa_error or bad sites
         # NB - to to this probabilitistically, use np.binomial(1, e, ts.num_sites)
         aa_error_by_site[0:n_bad_sites] = True
         np.random.shuffle(aa_error_by_site)
-    new_sd = sample_data.copy()
-    for i, (ancestral_allele_error, g) in enumerate(zip(
-            aa_error_by_site, sample_data.sites_genotypes[:])):
-        if ancestral_allele_error:
-            new_sd.data["sites/genotypes"][i, :] = g
+    new_sd = sample_data.copy(**kwargs)
+    genotypes = new_sd.data["sites/genotypes"][:]  # Could be big
+    alleles = new_sd.data["sites/alleles"][:]
+    inference = new_sd.data["sites/inference"][:]
+    
+    for i, (ancestral_allele_error, v) in enumerate(zip(
+            aa_error_by_site, sample_data.variants())):
+        if ancestral_allele_error and len(v.site.alleles)==2:
+            genotypes[i, :] = 1-v.genotypes
+            alleles[i] = list(reversed(alleles[i]))
+        genotypes[i, :] = make_seq_errors_genotype_model(
+            genotypes[i, :], error_probs)
+        if np.all(genotypes[i, :] == 1) or np.sum(genotypes[i, :] < 2): 
+            inference[i] = False
+        else:
+            inference[i] = True
+    new_sd.data["sites/genotypes"][:] = genotypes
+    new_sd.data["sites/alleles"][:] = alleles
+    new_sd.data["sites/inference"][:] = inference
+    return new_sd
+            
 
 def physical_to_genetic(recombination_map, input_physical_positions):
     map_pos = recombination_map.get_positions()
@@ -112,11 +130,11 @@ def setup_simulation(ts, prefix, cheat_recombination=False):
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_times=False)
-    # could inject error in here e.g.
-    # sample_data = plain_samples.add_errors(..., path=***)
     if cheat_recombination:
         prefix += "cheat"
-    sd = plain_samples.copy(path=prefix+".samples")
+    # could inject error in here e.g.
+    sd = add_errors(plain_samples, 0.01, path=prefix+".samples")
+    #sd = plain_samples.copy(path=prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
