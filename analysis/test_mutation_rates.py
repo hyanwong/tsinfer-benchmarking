@@ -19,7 +19,7 @@ def simulate_human(random_seed=123):
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(500, 500, 500)
+    samples = model.get_samples(1, 1, 1)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
@@ -138,30 +138,30 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "ts_file ma_mut, ms_mut, edges, muts")
+    "ts_path, ts_size, ma_mut, ms_mut, edges, muts, kc")
 
     
 def run(params):
     """
     Run a single inference, with the specified rates
     """
-    print(f"running with {params.ma_mut_rate} {params.ms_mut_rate}")
     base_rec_prob = np.mean(params.rec_rate[1:])
     prefix = None
     if params.sample_data.path is not None:
         assert params.sample_data.path.endswith(".samples")
         prefix = params.sample_data.path[0:-len(".samples")]
-        prefix = "{}_ma{}_ms{}_p{}".format(
+        inf_prefix = "{}_ma{}_ms{}_p{}".format(
             prefix,
             params.ma_mut_rate,
             params.ms_mut_rate,
             params.precision)
+    print(f"start GA (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     anc = tsinfer.generate_ancestors(
         params.sample_data,
         num_threads=params.n_threads,
-        path=None if prefix is None else prefix + ".ancestors",
+        path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"ga for {params.ma_mut_rate} {params.ms_mut_rate}")
+    print(f"start MA (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
@@ -169,8 +169,8 @@ def run(params):
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
-    print(f"ma for {params.ma_mut_rate} {params.ms_mut_rate}")
-    inferred_anc_ts.dump(path=prefix + ".ancestors.trees")
+    inferred_anc_ts.dump(path=inf_prefix + ".ancestors.trees")
+    print(f"start MS (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
@@ -178,16 +178,20 @@ def run(params):
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
-    print(f"ms for {params.ma_mut_rate} {params.ms_mut_rate}")
-    ts_file = prefix + ".trees"
-    inferred_ts.dump(path=ts_file)
+    ts_path = inf_prefix + ".trees"
+    inferred_ts.dump(path=ts_path)
+    try:
+        kc = inferred_ts.simplify().kc_distance(tskit.load(prefix+".trees"))
+    except tskit.exceptions.FileFormatError:
+        kc = None
     return Results(
-        ts_file=ts_file,
+        ts_path=ts_path,
+        ts_size=os.path.getsize(ts_path),
         ma_mut=params.ma_mut_rate,
         ms_mut=params.ms_mut_rate,
         edges=inferred_ts.num_edges,
-        muts=inferred_ts.num_mutations)
-
+        muts=inferred_ts.num_mutations,
+        kc=kc)
 
 def run_replicate(seed):
     """
@@ -196,19 +200,15 @@ def run_replicate(seed):
     samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
     #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
 
-    extra_cols = []
     if ts is not None:
-        ts.dump(prefix + ".ts")
-        extra_cols.append('kc')
-    
+        ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
     errs = np.array([0.5, 0.1, 0.05, 0.01, 0.005, 0.001])
     rel_muts = np.array([2, 1, 0.5, 0.1, 0.01, 0.001])
     param_iter = (
         Params(samples, rho, m*e, e, 11, 2) for e in errs for m in rel_muts)
     with open(prefix + ".results", "wt") as file:
-        cols = list(Results._fields) + extra_cols
-        print("\t".join(cols), file=file, flush=True)
+        print("\t".join(Results._fields), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
             for result in pool.imap_unordered(run, param_iter):
                 # Save to a results file.
@@ -216,21 +216,7 @@ def run_replicate(seed):
                 # d <- read.table(stdin(), header=T)
                 # d$rel_ma <- factor(d$ma_mut / d$ms_mut)
                 # ggplot() + geom_line(data = d, aes(x = ms_mut, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
-                output = []
-                inferred_ts = None
-                for name, val in zip(Results._fields, result):
-                    if name=="ts_file":
-                        sz = os.path.getsize(val)
-                        inferred_ts = tskit.load(val)
-                        output.append(sz)
-                    else:
-                        output.append(val)
-                for name in extra_cols:
-                    if name == "kc":
-                        output.append(ts.kc_distance(inferred_ts.simplify()))
-                    else:
-                        assert False
-                print("\t".join(str(o) for o in output), file=file, flush=True)
+                print("\t".join(str(r) for r in result), file=file, flush=True)
 
 
 if __name__ == "__main__":
