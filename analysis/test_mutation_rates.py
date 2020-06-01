@@ -139,7 +139,7 @@ def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
     if err == 0:
         sd = plain_samples.copy(path=prefix+".samples")
     else:
-        prefix += "_ae{err}"
+        prefix += f"_ae{err}"
         sd = add_errors(plain_samples, err, path=prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
