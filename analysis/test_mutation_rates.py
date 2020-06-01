@@ -20,7 +20,7 @@ def simulate_human(random_seed=123):
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(500, 500, 500)
+    samples = model.get_samples(100, 100, 100)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
@@ -118,7 +118,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(ts, prefix, cheat_recombination=False):
+def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
     """
     Take the results of a simulation and return a sample data file, the
     corresponding recombination rate array, a prefix to use for files, and
@@ -127,14 +127,19 @@ def setup_simulation(ts, prefix, cheat_recombination=False):
     If "cheat_recombination" is true, multiply the recombination_rate for known
     recombination locations from the simulation by 20
     
+    If 'err' is 0, we do not inject any errors into the haplotypes. Otherwise
+    we add empirical sequencing error and ancestral allele polarity error
+    
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_times=False)
     if cheat_recombination:
         prefix += "cheat"
-    # could inject error in here e.g.
-    sd = add_errors(plain_samples, 0.01, path=prefix+".samples")
-    #sd = plain_samples.copy(path=prefix+".samples")
+    if err == 0:
+        sd = plain_samples.copy(path=prefix+".samples")
+    else:
+        prefix += "_ae{err}"
+        sd = add_errors(plain_samples, err, path=prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
@@ -217,7 +222,7 @@ def run(params):
     print(f"MS done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     try:
         kc = inferred_ts.simplify().kc_distance(tskit.load(prefix+".trees"))
-    except tskit.exceptions.FileFormatError:
+    except FileNotFoundError:
         kc = None
     return Results(
         ts_path=ts_path,
@@ -232,8 +237,9 @@ def run_replicate(seed):
     """
     The main function that runs a parameter set
     """
-    samples, rho, prefix, ts = setup_simulation(*simulate_human(seed))
-    #samples, rho, prefix, ts = setup_simulation(*simulate_human(seed), cheat_recombination=True)
+    sim = simulate_human(seed, cheat_recombination=True, err=0.01)
+    # sim = simulate_human(seed)
+    samples, rho, prefix, ts = setup_simulation(*sim)
     #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
     
     if ts is not None:
@@ -258,7 +264,7 @@ def run_replicate(seed):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-r", "--replicates", type=int, default=1)
-    parser.add_argument("-s", "--random_seed", type=int, default=123)
+    parser.add_argument("-s", "--random_seed", type=int, default=1)
     parser.add_argument("-e", "--sequencing_error", type=float, default=0,
         help="Add some sequencing error to the haplotypes before inferring")
     args = parser.parse_args()
