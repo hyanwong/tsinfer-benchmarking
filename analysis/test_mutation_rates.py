@@ -6,6 +6,7 @@ import os.path
 import argparse
 import collections
 import multiprocessing
+import re
 
 import pandas as pd
 import msprime
@@ -20,7 +21,7 @@ def simulate_human(random_seed=123):
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(100, 100, 100)
+    samples = model.get_samples(2, 2, 2)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
@@ -153,21 +154,32 @@ def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
         rho[breakpoints] *= 20
     return sd, rho, prefix, ts
 
-def setup_TGP_chr20(prefix):
+def setup_sample_file(filename):
     """
     Return a Thousand Genomes Project sample data file, the
     corresponding recombination rate array, a prefix to use for files, and None
     """
-    sd = tsinfer.load(prefix + ".samples")
-    map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
-    if not map.is_cached():
-        map.download()
-    chr20_map = map.get_chromosome_map("chr20")
-    inference_distances = physical_to_genetic(
-        chr20_map,
-        sd.sites_position[:][sd.sites_inference])
-    rho = np.concatenate(([0.0], np.diff(inference_distances)))
-    return sd, rho, prefix, None
+    if not filename.endswith(".samples"):
+        raise ValueError("Sample data file must end with '.samples'")
+    sd = tsinfer.load(filename)
+    match = re.match(r'(chr\d+)', filename)
+    if match:
+        chr = match.group(1)
+        print("Using {chr} from HapMapII_GRCh37 for the recombination map")
+        map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
+        if not map.is_cached():
+            map.download()
+        chr_map = map.get_chromosome_map(chr)
+        inference_distances = physical_to_genetic(
+            chr_map,
+            sd.sites_position[:][sd.sites_inference])
+        rho = np.concatenate(([0.0], np.diff(inference_distances)))
+    else:
+        inference_distances = sd.sites_position[:][sd.sites_inference]
+        rho = np.concatenate(
+            ([0.0], np.diff(inference_distances)/sd.sequence_length))
+        
+    return sd, rho, filename[:-len(".samples")], None
 
 
 Params = collections.namedtuple(
@@ -233,14 +245,20 @@ def run(params):
         muts=inferred_ts.num_mutations,
         kc=kc)
 
-def run_replicate(seed):
+def run_replicate(rep, args):
     """
     The main function that runs a parameter set
     """
-    sim = simulate_human(seed, cheat_recombination=True, err=0.01)
-    # sim = simulate_human(seed)
-    samples, rho, prefix, ts = setup_simulation(*sim)
-    #samples, rho, prefix, ts = setup_TGP_chr20("data/1kg_chr20_small")
+    seed = rep+args.random_seed
+    if args.sample_file is None:
+        # Simulate
+        sim = simulate_human(seed)
+        samples, rho, prefix, ts = setup_simulation(
+            *sim,
+            cheat_recombination=args.cheat_breakpoints,
+            err=args.error)
+    else:
+        samples, rho, prefix, ts = setup_TGP_chr20(args.sample_file)
     
     if ts is not None:
         ts.dump(prefix + ".trees")
@@ -263,12 +281,23 @@ def run_replicate(seed):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("sample_file", nargs='?', default=None,
+        help="A tsinfer sample file ending in '.samples'. If given, do not"
+            "evaluate using a simulation but instead use (potentially) real"
+            "data from the specified file. If the filename contains chrNN where"
+            "'NN' is a number, assume this is a human samples file and use the"
+            "appropriate recombination map from the thousand genomes project")
     parser.add_argument("-r", "--replicates", type=int, default=1)
     parser.add_argument("-s", "--random_seed", type=int, default=1)
-    parser.add_argument("-e", "--sequencing_error", type=float, default=0,
-        help="Add some sequencing error to the haplotypes before inferring")
+    parser.add_argument("-e", "--error", type=float, default=0,
+        help="Add sequencing and ancestral state error to the haplotypes before"
+            "inferring. The value here gives the probability of ancestral state"
+            "error")
+    parser.add_argument("-c", "--cheat_breakpoints", action='store_true',
+        help="Cheat when using simulated data by increasing the recombination"
+            "probability in regions where there is a true breakpoint")
     args = parser.parse_args()
     
 
     for rep in range(args.replicates):
-        run_replicate(rep+args.random_seed)
+        run_replicate(rep, args)
