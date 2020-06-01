@@ -21,7 +21,7 @@ def simulate_human(random_seed=123):
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(2, 2, 2)
+    samples = model.get_samples(100, 100, 100)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
