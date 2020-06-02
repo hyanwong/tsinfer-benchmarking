@@ -220,7 +220,7 @@ def run(params):
         precision=params.precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
-    inferred_anc_ts.dump(path=inf_prefix + ".ancestors.trees")
+    inferred_anc_ts.dump(path=inf_prefix + ".atrees")
     print(f"MA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
