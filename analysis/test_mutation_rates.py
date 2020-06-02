@@ -31,7 +31,7 @@ def simulate_human(random_seed=123):
     l = ts.sequence_length
     # cut down ts for speed
     return (
-        ts.keep_intervals([[int(l * 16/20), int(l * 17/20)]]).trim(),
+        ts.keep_intervals([[int(l * 10/20), int(l * 12/20)]]).trim(),
         f"data/OOA_sim_seed{random_seed}")
 
 def test_sim(seed):
@@ -263,7 +263,7 @@ def run_replicate(rep, args):
     if ts is not None:
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
-    errs = np.array([0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001])
+    errs = np.array([1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001])
     muts = np.array([0.01, 0.001, 0.0001, 0.00001, 0.000001])
     param_iter = (
         Params(samples, rho, m, e, 11, 2) for e in errs for m in muts)
