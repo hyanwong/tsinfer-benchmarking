@@ -22,8 +22,7 @@ def run(filename):
     orig_ts = tskit.load(prefix + ".trees")
     inferred_ts = tskit.load(filename)
 
-    #with NamedTemporaryFile("wt") as nex1, NamedTemporaryFile("wt") as nex2:
-    with open("foo1.nex", "wt") as nex1, open("foo2.nex", "wt") as nex2:
+    with NamedTemporaryFile("wt") as nex1, NamedTemporaryFile("wt") as nex2:
         ts_extras.write_nexus_trees(orig_ts, nex1)
         nex1.flush()
         ts_extras.write_nexus_trees(inferred_ts.simplify(), nex2)
@@ -31,7 +30,6 @@ def run(filename):
         metrics = ARG_metrics.get_metrics(
             nex1.name, [nex2.name], randomly_resolve_inferred=True)
 
-    kc_poly = None
     return dict(
         prefix=prefix,
         ma_mut=ma_mut,
