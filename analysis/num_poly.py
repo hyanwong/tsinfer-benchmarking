@@ -9,6 +9,8 @@ import numpy as np
 
 def run(filename):
     m = re.search(r'^(.*)_ma([-e\d\.]+)_ms([-e\d\.]+)_p(\d+).trees$', filename)
+    if m is None:
+        return None
     prefix = m.group(1)
     ma_mut = float(m.group(2))
     ms_mut = float(m.group(3))
@@ -42,12 +44,13 @@ def process_files(filenames):
     var = []
     with multiprocessing.Pool(40) as pool:
         for result in pool.imap_unordered(run, filenames):
-            prefix.add(result['prefix'])
-            ma_mut.append(result['ma_mut'])
-            ms_mut.append(result['ms_mut'])
-            precision.add(result['precision'])
-            mean.append(result['mean'])
-            var.append(result['var'] ** (1/2))
+            if result is not None:
+                prefix.add(result['prefix'])
+                ma_mut.append(result['ma_mut'])
+                ms_mut.append(result['ms_mut'])
+                precision.add(result['precision'])
+                mean.append(result['mean'])
+                var.append(result['var'] ** (1/2))
     if len(prefix) != 1:
         raise ValueError("You must pass in files with all the same prefix")
     else:
