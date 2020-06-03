@@ -2,6 +2,7 @@ import multiprocessing
 import argparse
 import re
 import sys
+import os
 from tempfile import NamedTemporaryFile
 
 
@@ -44,27 +45,26 @@ def process_files(filenames):
     precision = set()
     metrics = []
     metric_names = ARG_metrics.get_metric_names()
+    file = None
     with multiprocessing.Pool(40) as pool:
         for result in pool.imap_unordered(run, filenames):
             if result is not None:
+                if file is None:
+                    file = open(result['prefix'] + ".kc_poly", "wt")
+                    print("\t".join(['ma_mut', 'ms_mut'] + metric_names), file=file)
                 prefix.add(result['prefix'])
-                ma_mut.append(result['ma_mut'])
-                ms_mut.append(result['ms_mut'])
                 precision.add(result['precision'])
-                metrics.append(result['metrics'])
+                row = [result['ma_mut'], result['ms_mut']]
+                row += [result['metrics'][k] for k in metric_names]
+                print("\t".join(str(r) for r in row), file=file)
+    filename = file.name
+    file.close()
     if len(prefix) != 1:
-        raise ValueError("You must pass in files with all the same prefix")
-    else:
-        prefix = prefix.pop()
+        os.rename(filename, filename + ".bad")
+        raise ValueError(
+            f"Input files do not all have the same prefix. Moved to {filename}.bad")
     if len(precision) != 1:
         print("Multiple precisions: not necessarily a problem")    
-    with open(prefix + ".kc_poly", "wt") as file:
-        print(
-            "\t".join(['ma_mut', 'ms_mut'] + metric_names),
-            file=file)
-        for r1, r2, m in zip(ma_mut, ms_mut, metrics):
-            row = [r1, r2] + [m[k] for k in metric_names]
-            print("\t".join(str(r) for r in row), file=file)
 
 
 if __name__ == "__main__":
