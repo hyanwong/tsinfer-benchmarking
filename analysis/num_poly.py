@@ -22,9 +22,11 @@ def run(filename):
 
     for tree in ts.trees():
         for n in tree.nodes():
-            sum += tree.num_children(n) * tree.span
-            sum_sq += (tree.num_children(n) ** 2) * tree.span
-            tot += tree.span
+            n_children = tree.num_children(n)
+            if n_children > 0:  # exclude leaves/samples
+                sum +=  n_children * tree.span
+                sum_sq += (n_children ** 2) * tree.span
+                tot += tree.span
     mean = sum/tot
     var = sum_sq / tot - (mean ** 2) # can't be bothered to adjust for n
     return dict(

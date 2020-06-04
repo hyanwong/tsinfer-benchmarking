@@ -188,7 +188,8 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "ts_path, ts_size, ma_mut, ms_mut, edges, muts, kc")
+    "ts_size, ma_mut, ms_mut, edges, muts, kc, "
+    "mean_node_children, var_node_children, ts_path")
 
     
 def run(params):
@@ -232,18 +233,36 @@ def run(params):
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
     print(f"MS done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+
+    # Calculate mean num children (polytomy-measure) for internal nodes
+    nc_sum = 0
+    nc_sum_sq = 0
+    nc_tot = 0
+    for tree in inferred_ts.trees():
+        for n in tree.nodes():
+            n_children = tree.num_children(n)
+            if n_children > 0:  # exclude leaves/samples
+                nc_sum +=  n_children * tree.span
+                nc_sum_sq += (n_children ** 2) * tree.span
+                nc_tot += tree.span
+    nc_mean = nc_sum/nc_tot
+    nc_var = nc_sum_sq / nc_tot - (nc_mean ** 2) # can't be bothered to adjust for n
+
+    # Calculate KC
     try:
         kc = inferred_ts.simplify().kc_distance(tskit.load(prefix+".trees"))
     except FileNotFoundError:
         kc = None
     return Results(
-        ts_path=ts_path,
         ts_size=os.path.getsize(ts_path),
         ma_mut=params.ma_mut_rate,
         ms_mut=params.ms_mut_rate,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
-        kc=kc)
+        kc=kc,
+        mean_node_children=nc_mean,
+        var_node_children=nc_var,
+        ts_path=ts_path)
 
 def run_replicate(rep, args):
     """
