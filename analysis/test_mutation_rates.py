@@ -233,12 +233,12 @@ def run(params):
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
     print(f"MS done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
-
+    simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
     nc_sum_sq = 0
     nc_tot = 0
-    for tree in inferred_ts.trees():
+    for tree in simplified_inferred_ts.trees():
         for n in tree.nodes():
             n_children = tree.num_children(n)
             if n_children > 0:  # exclude leaves/samples
@@ -250,7 +250,7 @@ def run(params):
 
     # Calculate KC
     try:
-        kc = inferred_ts.simplify().kc_distance(tskit.load(prefix+".trees"))
+        kc = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
     except FileNotFoundError:
         kc = None
     return Results(
