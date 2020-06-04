@@ -134,5 +134,5 @@ if __name__ == "__main__":
     params = Params(samples, rho, 1e-1, 1e-3, 11, 40)
     print(f"Running inference with {params}")
     with open(prefix + ".results", "wt") as file:
-        result = run(param_iter)
+        result = run(params)
         print("\t".join(str(r) for r in result), file=file, flush=True)
