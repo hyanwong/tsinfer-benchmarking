@@ -6,6 +6,7 @@ import re
 import tskit
 import numpy as np
 import tsinfer
+import stdpopsim
 
 def run(params):
     """
@@ -88,6 +89,34 @@ Results = collections.namedtuple(
     "Results",
     "ts_size, ma_mut, ms_mut, edges, muts, "
     "mean_node_children, var_node_children, ts_path")
+
+
+def setup_sample_file(filename):
+    """
+    Return a Thousand Genomes Project sample data file, the
+    corresponding recombination rate array, a prefix to use for files, and None
+    """
+    if not filename.endswith(".samples"):
+        raise ValueError("Sample data file must end with '.samples'")
+    sd = tsinfer.load(filename)
+    match = re.match(r'(chr\d+)', filename)
+    if match:
+        chr = match.group(1)
+        print("Using {chr} from HapMapII_GRCh37 for the recombination map")
+        map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
+        if not map.is_cached():
+            map.download()
+        chr_map = map.get_chromosome_map(chr)
+        inference_distances = physical_to_genetic(
+            chr_map,
+            sd.sites_position[:][sd.sites_inference])
+        rho = np.concatenate(([0.0], np.diff(inference_distances)))
+    else:
+        inference_distances = sd.sites_position[:][sd.sites_inference]
+        rho = np.concatenate(
+            ([0.0], np.diff(inference_distances)/sd.sequence_length))
+        
+    return sd, rho, filename[:-len(".samples")], None
 
 
 if __name__ == "__main__":
