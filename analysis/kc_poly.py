@@ -56,7 +56,7 @@ def process_files(filenames):
                 precision.add(result['precision'])
                 row = [result['ma_mut'], result['ms_mut']]
                 row += [result['metrics'][k] for k in metric_names]
-                print("\t".join(str(r) for r in row), file=file)
+                print("\t".join(str(r) for r in row), file=file, flush=True)
     filename = file.name
     file.close()
     if len(prefix) != 1:
