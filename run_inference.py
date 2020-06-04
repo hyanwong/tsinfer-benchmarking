@@ -91,6 +91,13 @@ Results = collections.namedtuple(
     "mean_node_children, var_node_children, ts_path")
 
 
+def physical_to_genetic(recombination_map, input_physical_positions):
+    map_pos = recombination_map.get_positions()
+    map_rates = recombination_map.get_rates()
+    map_genetic_positions = np.insert(np.cumsum(np.diff(map_pos) * map_rates[:-1]), 0, 0)
+    return np.interp(input_physical_positions, map_pos, map_genetic_positions)
+
+
 def setup_sample_file(filename):
     """
     Return a Thousand Genomes Project sample data file, the
