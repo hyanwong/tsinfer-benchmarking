@@ -99,10 +99,10 @@ def setup_sample_file(filename):
     if not filename.endswith(".samples"):
         raise ValueError("Sample data file must end with '.samples'")
     sd = tsinfer.load(filename)
-    match = re.match(r'(chr\d+)', filename)
+    match = re.search(r'(chr\d+)', filename)
     if match:
         chr = match.group(1)
-        print("Using {chr} from HapMapII_GRCh37 for the recombination map")
+        print(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
         map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
         if not map.is_cached():
             map.download()
