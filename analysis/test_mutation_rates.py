@@ -31,7 +31,7 @@ def simulate_human(random_seed=123):
     l = ts.sequence_length
     # cut down ts for speed
     return (
-        ts.keep_intervals([[int(l * 10/20), int(l * 12/20)]]).trim(),
+        ts.keep_intervals([[int(l * 3/20), int(l * 6/20)]]).trim(),
         f"data/OOA_sim_seed{random_seed}")
 
 def test_sim(seed):
