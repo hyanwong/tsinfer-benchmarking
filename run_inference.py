@@ -138,7 +138,7 @@ if __name__ == "__main__":
     
 
     samples, rho, prefix, ts = setup_sample_file(args.sample_file)
-    params = Params(samples, rho, 1e-1, 1e-3, 11, 40)
+    params = Params(samples, rho, 1e-1, 1e-2, 11, 40)
     print(f"Running inference with {params}")
     with open(prefix + ".results", "wt") as file:
         result = run(params)
