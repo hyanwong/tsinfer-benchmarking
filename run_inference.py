@@ -1,3 +1,12 @@
+import os.path
+import argparse
+import collections
+import re
+
+import tskit
+import numpy as np
+import tsinfer
+
 def run(params):
     """
     Run a single inference, with the specified rates
