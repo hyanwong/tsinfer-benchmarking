@@ -277,7 +277,7 @@ def run_replicate(rep, args):
             cheat_recombination=args.cheat_breakpoints,
             err=args.error)
     else:
-        samples, rho, prefix, ts = setup_TGP_chr20(args.sample_file)
+        samples, rho, prefix, ts = setup_sample_file(args.sample_file)
     
     if ts is not None:
         ts.dump(prefix + ".trees")
