@@ -129,16 +129,47 @@ def setup_sample_file(filename):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sample_file", default=None,
-        help="A tsinfer sample file ending in '.samples'. If given, do not"
-            "evaluate using a simulation but instead use (potentially) real"
-            "data from the specified file. If the filename contains chrNN where"
-            "'NN' is a number, assume this is a human samples file and use the"
-            "appropriate recombination map from the thousand genomes project")
+        help="A tsinfer sample file ending in '.samples'. If the filename contains chrNN"
+            " where 'NN' is a number, assume this is a human samples file and use the"
+            " appropriate recombination map from the thousand genomes project, otherwise"
+            " use the physical distance between sites.")
+    # The _mrate parameter defaults set from analysis ot 1000G, see
+    # https://github.com/tskit-dev/tsinfer/issues/263#issuecomment-639060101
+    parser.add_argument("-A", "--match_ancestors_mrate", type=float, default=1e-1,
+        help="The recurrent mutation probability in the match ancestors phase,"
+            " as a fraction of the average recombination probability between sites")
+    parser.add_argument("-S", "--match_samples_mrate", type=float, default=1e-2,
+        help="The recurrent mutation probability in the match samples phase,"
+            " as a fraction of the average recombination probability between sites")
+    parser.add_argument("-p", "--precision", type=int, default=None,
+        help="The precision, as a number of decimal places, which will affect the speed"
+            " of the matching algorithm (higher precision: lower speed). If None,"
+            " calculate the smallest of the recombination rates or mutation rates, and"
+            " use the negative exponent of that number plus four. E.g. if the smallest"
+            " recombination rate is 2.5e-6, use precision = 6+4 = 10"
+        )
+    parser.add_argument("-t", "--num_threads", type=int, default=0,
+        help="The number of threads to use in inference")
     args = parser.parse_args()
     
 
     samples, rho, prefix, ts = setup_sample_file(args.sample_file)
-    params = Params(samples, rho, 1e-1, 1e-2, 11, 40)
+    if args.precision is None:
+        precision = int(np.ceil(
+            -min(
+                np.min(np.log10(rho[1:])),
+                np.log10(args.match_ancestors_mrate),
+                np.log10(args.match_samples_mrate))))
+    else:
+        precision = args.precision
+
+    params = Params(
+        samples,
+        rho,
+        args.match_ancestors_mrate,
+        args.match_samples_mrate,
+        precision,
+        args.num_threads)
     print(f"Running inference with {params}")
     with open(prefix + ".results", "wt") as file:
         result = run(params)
