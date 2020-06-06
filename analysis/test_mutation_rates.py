@@ -188,7 +188,7 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "ma_mut, ms_mut, precision, edges, muts, kc"
+    "ma_mut, ms_mut, precision, edges, muts, kc, "
     "mean_node_children, var_node_children, ts_size, ts_path")
 
     
