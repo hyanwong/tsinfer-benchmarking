@@ -206,8 +206,8 @@ def run(params):
         precision = params.args.precision
     
     base_rec_prob = np.mean(params.rec_rate[1:])
-    print("Starting {} {} with mean rho {}".format(
-        params.ma_mut_rate, params.ms_mut_rate, base_rec_prob))
+    print("Starting {} {} with mean rho {} and precision {}".format(
+        params.ma_mut_rate, params.ms_mut_rate, base_rec_prob, precision))
     prefix = None
     if params.sample_data.path is not None:
         assert params.sample_data.path.endswith(".samples")
