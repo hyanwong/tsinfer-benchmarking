@@ -235,7 +235,7 @@ def run(params):
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
-        num_threads=args['num_threads'],
+        num_threads=params.args.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
