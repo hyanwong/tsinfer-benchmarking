@@ -184,26 +184,26 @@ def setup_sample_file(filename):
 
 Params = collections.namedtuple(
     "Params",
-    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, args")
+    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, num_threads")
 
 Results = collections.namedtuple(
     "Results",
-    "ts_size, ma_mut, ms_mut, edges, muts, kc, "
-    "mean_node_children, var_node_children, ts_path")
+    "ma_mut, ms_mut, precision, edges, muts, kc"
+    "mean_node_children, var_node_children, ts_size, ts_path")
 
     
 def run(params):
     """
     Run a single inference, with the specified rates
     """
-    if params.args.precision is None:
+    if params.precision is None:
         precision = int(np.ceil(
             -min(
                 np.min(np.log10(params.rec_rate[1:])),
                 np.log10(params.ma_mut_rate),
                 np.log10(params.ms_mut_rate))))
     else:
-        precision = params.args.precision
+        precision = params.precision
     
     base_rec_prob = np.mean(params.rec_rate[1:])
     print("Starting {} {} with mean rho {} and precision {}".format(
@@ -219,14 +219,14 @@ def run(params):
             precision)
     anc = tsinfer.generate_ancestors(
         params.sample_data,
-        num_threads=params.args.num_threads,
+        num_threads=params.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
     print(f"GA done (ma_mut: {params.ma_mut_rate}, ms_mut: {params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
-        num_threads=params.args.num_threads,
+        num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
@@ -235,7 +235,7 @@ def run(params):
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
-        num_threads=params.args.num_threads,
+        num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
@@ -267,14 +267,15 @@ def run(params):
     except FileNotFoundError:
         kc = None
     return Results(
-        ts_size=os.path.getsize(ts_path),
         ma_mut=params.ma_mut_rate,
         ms_mut=params.ms_mut_rate,
+        precision=params.precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
         kc=kc,
         mean_node_children=nc_mean,
         var_node_children=nc_var,
+        ts_size=os.path.getsize(ts_path),
         ts_path=ts_path)
 
 def run_replicate(rep, args):
@@ -282,6 +283,11 @@ def run_replicate(rep, args):
     The main function that runs a parameter set
     """
     seed = rep+args.random_seed
+    if len(args.precision) == 0:
+        precision = [None]
+    else:
+        precision = args.precision
+    nt = 2 if args.num_threads is None else args.num_threads
     if args.sample_file is None:
         # Simulate
         sim = simulate_human(seed)
@@ -291,14 +297,13 @@ def run_replicate(rep, args):
             err=args.error)
     else:
         samples, rho, prefix, ts = setup_sample_file(args.sample_file)
-    
     if ts is not None:
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
     errs = np.array([2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.000001])
     muts = np.array([2.0, 1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001])
     param_iter = (
-        Params(samples, rho, m, e, args) for e in errs for m in muts)
+        Params(samples, rho, m, e, p, nt) for e in errs for m in muts for p in precision)
     with open(prefix + ".results", "wt") as file:
         print("\t".join(Results._fields), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
@@ -328,13 +333,13 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--cheat_breakpoints", action='store_true',
         help="Cheat when using simulated data by increasing the recombination"
             "probability in regions where there is a true breakpoint")
-    parser.add_argument("-p", "--precision", type=int, default=None,
+    parser.add_argument("-p", "--precision", nargs='*', type=int, default=[],
         help="The precision, as a number of decimal places, which will affect the speed"
-            " of the matching algorithm (higher precision: lower speed). If None,"
+            " of the matching algorithm (higher precision: lower speed). If not given,"
             " calculate the smallest of the recombination rates or mutation rates, and"
             " use the negative exponent of that number plus four. E.g. if the smallest"
             " recombination rate is 2.5e-6, use precision = 6+4 = 10")
-    parser.add_argument("-t", "--num_threads", type=int, default=2,
+    parser.add_argument("-t", "--num_threads", type=int, default=None,
         help="The number of threads to use in each inference subprocess")
     args = parser.parse_args()
     
