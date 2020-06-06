@@ -184,7 +184,7 @@ def setup_sample_file(filename):
 
 Params = collections.namedtuple(
     "Params",
-    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, n_threads")
+    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, args")
 
 Results = collections.namedtuple(
     "Results",
@@ -196,6 +196,15 @@ def run(params):
     """
     Run a single inference, with the specified rates
     """
+    if params.args.precision is None:
+        precision = int(np.ceil(
+            -min(
+                np.min(np.log10(params.rec_rate[1:])),
+                np.log10(params.ma_mut_rate),
+                np.log10(params.ms_mut_rate))))
+    else:
+        precision = params.args.precision
+    
     base_rec_prob = np.mean(params.rec_rate[1:])
     print("Starting {} {} with mean rho {}".format(
         params.ma_mut_rate, params.ms_mut_rate, base_rec_prob))
@@ -207,18 +216,18 @@ def run(params):
             prefix,
             params.ma_mut_rate,
             params.ms_mut_rate,
-            params.precision)
+            precision)
     anc = tsinfer.generate_ancestors(
         params.sample_data,
-        num_threads=params.n_threads,
+        num_threads=params.args.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"GA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+    print(f"GA done (ma_mut: {params.ma_mut_rate}, ms_mut: {params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
-        num_threads=params.n_threads,
-        precision=params.precision,
+        num_threads=params.args.num_threads,
+        precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ma_mut_rate)
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
@@ -226,18 +235,19 @@ def run(params):
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
-        num_threads=params.n_threads,
-        precision=params.precision,
+        num_threads=args['num_threads'],
+        precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
-    print(f"MS done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+    print(f"MS done: ms_mut rate = {params.ms_mut_rate})")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
     nc_sum_sq = 0
     nc_tot = 0
+    root_lengths = collections.defaultdict(float)
     for tree in simplified_inferred_ts.trees():
         for n in tree.nodes():
             n_children = tree.num_children(n)
@@ -247,6 +257,9 @@ def run(params):
                 nc_tot += tree.span
     nc_mean = nc_sum/nc_tot
     nc_var = nc_sum_sq / nc_tot - (nc_mean ** 2) # can't be bothered to adjust for n
+
+    # Calculate span of root nodes in simplified tree
+    
 
     # Calculate KC
     try:
@@ -285,7 +298,7 @@ def run_replicate(rep, args):
     errs = np.array([2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.000001])
     muts = np.array([2.0, 1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001])
     param_iter = (
-        Params(samples, rho, m, e, 11, 2) for e in errs for m in muts)
+        Params(samples, rho, m, e, args) for e in errs for m in muts)
     with open(prefix + ".results", "wt") as file:
         print("\t".join(Results._fields), file=file, flush=True)
         with multiprocessing.Pool(40) as pool:
@@ -315,6 +328,14 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--cheat_breakpoints", action='store_true',
         help="Cheat when using simulated data by increasing the recombination"
             "probability in regions where there is a true breakpoint")
+    parser.add_argument("-p", "--precision", type=int, default=None,
+        help="The precision, as a number of decimal places, which will affect the speed"
+            " of the matching algorithm (higher precision: lower speed). If None,"
+            " calculate the smallest of the recombination rates or mutation rates, and"
+            " use the negative exponent of that number plus four. E.g. if the smallest"
+            " recombination rate is 2.5e-6, use precision = 6+4 = 10")
+    parser.add_argument("-t", "--num_threads", type=int, default=2,
+        help="The number of threads to use in each inference subprocess")
     args = parser.parse_args()
     
 
