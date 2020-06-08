@@ -199,11 +199,12 @@ def run(params):
     rho = params.rec_rate[1:]
     base_rec_prob = np.quantile(rho, 0.5)
     if params.precision is None:
-        precision = int(np.ceil(
-            -min(
-                np.min(np.log10(rho)),
-                np.log10(params.ma_mut_rate * base_rec_prob),
-                np.log10(params.ms_mut_rate * base_rec_prob))))
+        # Smallest recombination rate
+        min_rho = int(np.ceil(-np.min(np.log10(rho))))
+        # Smallest mean 
+        av_min = int(np.ceil(-np.log10(
+            min(1, params.ma_mut_rate, params.ms_mut_rate) * base_rec_prob)))
+        precision = min(min_rho, av_min+3)
     else:
         precision = params.precision
     
