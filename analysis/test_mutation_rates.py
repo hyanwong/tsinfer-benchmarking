@@ -196,18 +196,23 @@ def run(params):
     """
     Run a single inference, with the specified rates
     """
+    rho = params.rec_rate[1:]
+    base_rec_prob = np.quantile(rho, 0.5)
     if params.precision is None:
         precision = int(np.ceil(
             -min(
-                np.min(np.log10(params.rec_rate[1:])),
-                np.log10(params.ma_mut_rate),
-                np.log10(params.ms_mut_rate))))
+                np.min(np.log10(rho)),
+                np.log10(params.ma_mut_rate * base_rec_prob),
+                np.log10(params.ms_mut_rate * base_rec_prob))))
     else:
         precision = params.precision
     
-    base_rec_prob = np.mean(params.rec_rate[1:])
-    print("Starting {} {} with mean rho {} and precision {}".format(
-        params.ma_mut_rate, params.ms_mut_rate, base_rec_prob, precision))
+    print(
+        f"Starting {params.ma_mut_rate} {params.ms_mut_rate}",
+        f"with base rho {base_rec_prob:.5g}",
+        f"(mean {np.mean(rho):.4g} median {np.quantile(rho, 0.5):.4g}",
+        f"min {np.min(rho):.4g}, 2.5% quantile {np.quantile(rho, 0.025):.4g})",
+        f"precision {precision}")
     prefix = None
     if params.sample_data.path is not None:
         assert params.sample_data.path.endswith(".samples")
