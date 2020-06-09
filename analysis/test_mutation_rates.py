@@ -275,7 +275,7 @@ def run(params):
     return Results(
         ma_mut=params.ma_mut_rate,
         ms_mut=params.ms_mut_rate,
-        precision=params.precision,
+        precision=precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
         num_trees=inferred_ts.num_trees,
