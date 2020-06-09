@@ -188,8 +188,8 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "ma_mut, ms_mut, precision, edges, muts, kc, "
-    "mean_node_children, var_node_children, ts_size, ts_path")
+    "ma_mut, ms_mut, precision, edges, muts, num_trees, "
+    "kc, mean_node_children, var_node_children, ts_size, ts_path")
 
     
 def run(params):
@@ -278,6 +278,7 @@ def run(params):
         precision=params.precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
+        num_trees=inferred_ts.num_trees,
         kc=kc,
         mean_node_children=nc_mean,
         var_node_children=nc_var,
