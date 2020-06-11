@@ -7,6 +7,7 @@ import argparse
 import collections
 import multiprocessing
 import re
+import time
 
 import pandas as pd
 import msprime
@@ -189,7 +190,7 @@ Params = collections.namedtuple(
 Results = collections.namedtuple(
     "Results",
     "ma_mut, ms_mut, precision, edges, muts, num_trees, "
-    "kc, mean_node_children, var_node_children, ts_size, ts_path")
+    "kc, mean_node_children, var_node_children, process_time, ts_size, ts_path")
 
     
 def run(params):
@@ -223,6 +224,7 @@ def run(params):
             params.ma_mut_rate,
             params.ms_mut_rate,
             precision)
+    start_time = time.process_time()
     anc = tsinfer.generate_ancestors(
         params.sample_data,
         num_threads=params.num_threads,
@@ -245,6 +247,7 @@ def run(params):
         precision=precision,
         recombination_rate=params.rec_rate,
         mutation_rate=base_rec_prob * params.ms_mut_rate)
+    process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
     print(f"MS done: ms_mut rate = {params.ms_mut_rate})")
@@ -282,6 +285,7 @@ def run(params):
         kc=kc,
         mean_node_children=nc_mean,
         var_node_children=nc_var,
+        process_time=process_time,
         ts_size=os.path.getsize(ts_path),
         ts_path=ts_path)
 
