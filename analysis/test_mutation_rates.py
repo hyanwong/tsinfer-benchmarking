@@ -205,7 +205,7 @@ def run(params):
         # Smallest mean 
         av_min = int(np.ceil(-np.log10(
             min(1, params.ma_mut_rate, params.ms_mut_rate) * base_rec_prob)))
-        precision = max(min_rho+1, av_min+3)
+        precision = max(min_rho, av_min) + 3
     else:
         precision = params.precision
     
