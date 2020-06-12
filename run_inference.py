@@ -27,13 +27,13 @@ def run(params):
     if params.precision is None:
         # Smallest recombination rate
         min_rho = int(np.ceil(-np.min(np.log10(rho))))
-        # Smallest mean 
+        # Smallest mean
         av_min = int(np.ceil(-np.log10(
             min(1, params.ma_mut_rate, params.ms_mut_rate) * base_rec_prob)))
         precision = max(min_rho, av_min) + 3
     else:
         precision = params.precision
-    
+
     print(
         f"Starting {params.ma_mut_rate} {params.ms_mut_rate}",
         f"with base rho {base_rec_prob:.5g}",
@@ -54,6 +54,7 @@ def run(params):
         params.sample_data,
         num_threads=params.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
+        progress_monitor=tsinfer.cli.ProgressMonitor(1, 1, 0, 0, 0),
     )
     print(f"GA done (ma_mut: {params.ma_mut_rate}, ms_mut: {params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
@@ -62,7 +63,9 @@ def run(params):
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=base_rec_prob * params.ma_mut_rate)
+        mutation_rate=base_rec_prob * params.ma_mut_rate,
+        progress_monitor=tsinfer.cli.ProgressMonitor(1, 0, 1, 0, 0),
+    )
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
     print(f"MA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
     inferred_ts = tsinfer.match_samples(
@@ -71,7 +74,9 @@ def run(params):
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=base_rec_prob * params.ms_mut_rate)
+        mutation_rate=base_rec_prob * params.ms_mut_rate,
+        progress_monitor=tsinfer.cli.ProgressMonitor(1, 0, 0, 0, 1),
+    )
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
@@ -93,7 +98,7 @@ def run(params):
     nc_var = nc_sum_sq / nc_tot - (nc_mean ** 2) # can't be bothered to adjust for n
 
     # Calculate span of root nodes in simplified tree
-    
+
 
     # Calculate KC
     try:
@@ -146,7 +151,7 @@ def setup_sample_file(filename):
         inference_distances = sd.sites_position[:][sd.sites_inference]
         rho = np.concatenate(
             ([0.0], np.diff(inference_distances)/sd.sequence_length))
-        
+
     return sd, rho, filename[:-len(".samples")], None
 
 
@@ -174,7 +179,6 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--num_threads", type=int, default=0,
         help="The number of threads to use in inference")
     args = parser.parse_args()
-    
 
     samples, rho, prefix, ts = setup_sample_file(args.sample_file)
 
