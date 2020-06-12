@@ -2,6 +2,7 @@ import os.path
 import argparse
 import collections
 import re
+import time
 
 import tskit
 import numpy as np
@@ -169,7 +170,7 @@ if __name__ == "__main__":
             " of the matching algorithm (higher precision = lower speed). If None,"
             " calculate the smallest of the recombination rates or mutation rates, and"
             " use the negative exponent of that number plus one. E.g. if the smallest"
-            " recombination rate is 2.5e-6, use precision = 6+1 = 7")
+            " recombination rate is 2.5e-6, use precision = 6+3 = 7")
     parser.add_argument("-t", "--num_threads", type=int, default=0,
         help="The number of threads to use in inference")
     args = parser.parse_args()
