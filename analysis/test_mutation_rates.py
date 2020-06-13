@@ -189,7 +189,7 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "ma_mut, ms_mut, precision, edges, muts, num_trees, "
+    "abs_ma_mut, abs_ms_mut, rel_ma_mut, rel_ms_mut, precision, edges, muts, num_trees, "
     "kc, mean_node_children, var_node_children, process_time, ts_size, ts_path")
 
     
@@ -208,7 +208,8 @@ def run(params):
         precision = max(min_rho, av_min) + 3
     else:
         precision = params.precision
-    
+    ma_mut = base_rec_prob * params.ma_mut_rate
+    ms_mut = base_rec_prob * params.ms_mut_rate
     print(
         f"Starting {params.ma_mut_rate} {params.ms_mut_rate}",
         f"with base rho {base_rec_prob:.5g}",
@@ -219,7 +220,7 @@ def run(params):
     if params.sample_data.path is not None:
         assert params.sample_data.path.endswith(".samples")
         prefix = params.sample_data.path[0:-len(".samples")]
-        inf_prefix = "{}_ma{}_ms{}_p{}".format(
+        inf_prefix = "{}_rma{}_rms{}_p{}".format(
             prefix,
             params.ma_mut_rate,
             params.ms_mut_rate,
@@ -230,27 +231,27 @@ def run(params):
         num_threads=params.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"GA done (ma_mut: {params.ma_mut_rate}, ms_mut: {params.ms_mut_rate})")
+    print(f"GA done (rel_ma_mut:{params.ma_mut_rate}, rel_ms_mut:{params.ms_mut_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=base_rec_prob * params.ma_mut_rate)
+        mutation_rate=ma_mut)
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
-    print(f"MA done (ma_mut:{params.ma_mut_rate} ms_mut{params.ms_mut_rate})")
+    print(f"MA done: abs_ma_mut rate = {ma_mut}")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=base_rec_prob * params.ms_mut_rate)
+        mutation_rate=ms_mut)
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
-    print(f"MS done: ms_mut rate = {params.ms_mut_rate})")
+    print(f"MS done: abs_ms_mut rate = {ms_mut}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -276,8 +277,10 @@ def run(params):
     except FileNotFoundError:
         kc = None
     return Results(
-        ma_mut=params.ma_mut_rate,
-        ms_mut=params.ms_mut_rate,
+        abs_ma_mut=ma_mut,
+        abs_ms_mut=ms_mut,
+        rel_ma_mut=params.ma_mut_rate,
+        rel_ms_mut=params.ms_mut_rate,
         precision=precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
