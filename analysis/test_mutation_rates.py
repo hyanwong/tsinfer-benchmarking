@@ -155,31 +155,41 @@ def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
         rho[breakpoints] *= 20
     return sd, rho, prefix, ts
 
-def setup_sample_file(filename):
+def setup_sample_file(args):
     """
     Return a Thousand Genomes Project sample data file, the
     corresponding recombination rate array, a prefix to use for files, and None
     """
+    filename = args.sample_file
+    map = args.genetic_map
     if not filename.endswith(".samples"):
         raise ValueError("Sample data file must end with '.samples'")
     sd = tsinfer.load(filename)
+    inference_pos = sd.sites_position[:][sd.sites_inference[:]]
+
     match = re.search(r'(chr\d+)', filename)
-    if match:
-        chr = match.group(1)
-        print(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
-        map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
-        if not map.is_cached():
-            map.download()
-        chr_map = map.get_chromosome_map(chr)
-        inference_distances = physical_to_genetic(
-            chr_map,
-            sd.sites_position[:][sd.sites_inference])
-        rho = np.concatenate(([0.0], np.diff(inference_distances)))
+    if match or map is not None:
+        if map is not None:
+            chr_map = msprime.RecombinationMap.read_hapmap(map)
+        else:
+            chr = match.group(1)
+            print(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
+            map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
+            if not map.is_cached():
+                map.download()
+            chr_map = map.get_chromosome_map(chr)
+        inference_distances = physical_to_genetic(chr_map, inference_pos)
+        d = np.diff(inference_distances)
+        rho = np.concatenate(([0.0], d))
     else:
         inference_distances = sd.sites_position[:][sd.sites_inference]
         rho = np.concatenate(
             ([0.0], np.diff(inference_distances)/sd.sequence_length))
         
+    if np.any(d==0):
+        w = np.where(d==0)
+        raise ValueError("Zero recombination rates at", w, inference_pos[w])
+
     return sd, rho, filename[:-len(".samples")], None
 
 
@@ -310,7 +320,7 @@ def run_replicate(rep, args):
             cheat_recombination=args.cheat_breakpoints,
             err=args.error)
     else:
-        samples, rho, prefix, ts = setup_sample_file(args.sample_file)
+        samples, rho, prefix, ts = setup_sample_file(args)
     if ts is not None:
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
@@ -335,7 +345,8 @@ if __name__ == "__main__":
     parser.add_argument("sample_file", nargs='?', default=None,
         help="A tsinfer sample file ending in '.samples'. If given, do not"
             "evaluate using a simulation but instead use (potentially) real"
-            "data from the specified file. If the filename contains chrNN where"
+            "data from the specified file. If no genetic map is provided"
+            " via the -m switch, and the filename contains chrNN where"
             "'NN' is a number, assume this is a human samples file and use the"
             "appropriate recombination map from the thousand genomes project")
     parser.add_argument("-r", "--replicates", type=int, default=1)
@@ -355,6 +366,9 @@ if __name__ == "__main__":
             " recombination rate is 2.5e-6, use precision = 6+4 = 10")
     parser.add_argument("-t", "--num_threads", type=int, default=None,
         help="The number of threads to use in each inference subprocess")
+    parser.add_argument("-m", "--genetic_map", default=None,
+        help="An alternative genetic map to be used for this analysis, in the format"
+            "expected by msprime.RecombinationMap.read_hapmap")
     args = parser.parse_args()
     
 
