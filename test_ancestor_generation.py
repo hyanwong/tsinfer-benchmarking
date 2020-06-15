@@ -16,6 +16,8 @@ if __name__ == "__main__":
         help="A tsinfer sample file ending in '.samples")
     parser.add_argument("-o", "--output_file", default=None,
         help="An output ancestors file")
+    parser.add_argument("-t", "--num_threads", type=int, default=0,
+        help="The number of threads to use in inference")
     parser.add_argument("-e", "--engine", default='P',
         help="'C' or 'P' for the c engine or python engine")
     args = parser.parse_args()
@@ -33,6 +35,7 @@ if __name__ == "__main__":
         sd,
         path=args.output_file,
         engine=engine,
+        num_threads=args.num_threads,
         progress_monitor=tsinfer.cli.ProgressMonitor(1, 1, 0, 0, 0),
     )
     
