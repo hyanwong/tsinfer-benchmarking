@@ -47,7 +47,7 @@ if __name__ == "__main__":
     
     print("{}/{} full length ancestors at {} unique times ({} single)".format(
         np.sum(full_len),
-        len(full_len)
+        len(full_len),
         len(u),
         np.sum(cnts==1),
         ))
