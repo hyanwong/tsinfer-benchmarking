@@ -36,7 +36,8 @@ if __name__ == "__main__":
         path=args.output_file,
         engine=engine,
         num_threads=args.num_threads,
-        progress_monitor=tsinfer.cli.ProgressMonitor(1, 1, 0, 0, 0),
+        progress_monitor=tsinfer.cli.ProgressMonitor(
+            enabled=True, generate_ancestors=True),
     )
     
     full_len = np.logical_and(
@@ -44,9 +45,9 @@ if __name__ == "__main__":
     
     u, cnts = np.unique(anc.ancestors_time[:][2:][full_len], return_counts=True)
     
-    print("{} full length ancestors at {} unique times ({} single)".format(
+    print("{}/{} full length ancestors at {} unique times ({} single)".format(
         np.sum(full_len),
+        len(full_len)
         len(u),
-        np.sum(full_len),
         np.sum(cnts==1),
         ))
