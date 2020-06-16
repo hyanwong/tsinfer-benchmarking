@@ -180,11 +180,10 @@ def setup_sample_file(args):
             chr_map = map.get_chromosome_map(chr)
         inference_distances = physical_to_genetic(chr_map, inference_pos)
         d = np.diff(inference_distances)
-        rho = np.concatenate(([0.0], d))
     else:
         inference_distances = sd.sites_position[:][sd.sites_inference]
-        rho = np.concatenate(
-            ([0.0], np.diff(inference_distances)/sd.sequence_length))
+        d = np.diff(inference_distances)/sd.sequence_length
+    rho = np.concatenate(([0.0], d))
         
     if np.any(d==0):
         w = np.where(d==0)
