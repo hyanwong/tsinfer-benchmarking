@@ -28,7 +28,7 @@ def simulate_human(random_seed=123, each_pop_n=100):
         model, contig, samples,
         gene_conversion_rate=r_map.mean_recombination_rate * 10,
         gene_conversion_track_length=300,
-        random_seed=random_seed)
+        seed=random_seed)
     l = ts.sequence_length
     # cut down ts for speed
     return (
