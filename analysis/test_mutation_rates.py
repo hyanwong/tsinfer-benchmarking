@@ -78,7 +78,9 @@ def make_seq_errors_genotype_model(g, error_probs):
     return(np.reshape(genos,-1))
 
     
-def add_errors(sample_data, ancestral_allele_error=0, **kwargs):
+def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs):
+    if random_seed is not None:
+        np.random.seed(random_seed)
     if sample_data.num_samples % 2 != 0:
         raise ValueError("Must have an even number of samples to inject error")
     error_probs = pd.read_csv("data/EmpiricalErrorPlatinum1000G.csv")
@@ -120,7 +122,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(ts, prefix=None, cheat_recombination=False, err=0):
+def setup_simulation(ts, prefix=None, random_seed=None, cheat_recombination=False, err=0):
     """
     Take the results of a simulation and return a sample data file, the
     corresponding recombination rate array, a prefix to use for files, and
@@ -145,6 +147,7 @@ def setup_simulation(ts, prefix=None, cheat_recombination=False, err=0):
         sd = add_errors(
             plain_samples,
             err,
+            random_seed=random_seed,
             path=None if prefix is None else prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
@@ -320,6 +323,7 @@ def run_replicate(rep, args):
         sim = simulate_human(seed)
         samples, rho, prefix, ts = setup_simulation(
             *sim,
+            random_seed=seed,
             cheat_recombination=args.cheat_breakpoints,
             err=args.error)
     else:
