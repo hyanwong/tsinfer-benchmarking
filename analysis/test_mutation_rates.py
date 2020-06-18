@@ -16,13 +16,13 @@ import numpy as np
 import stdpopsim #  Requires a version of msprime which allows gene conversion
 import tsinfer
 
-def simulate_human(random_seed=123):
+def simulate_human(random_seed=123, each_pop_n=100):
     species = stdpopsim.get_species("HomSap")
     contig = species.get_contig("chr20")
     r_map = contig.recombination_map
     model = species.get_demographic_model('OutOfAfrica_3G09')
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(100, 100, 100)
+    samples = model.get_samples(each_pop_n, each_pop_n, each_pop_n)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
@@ -120,7 +120,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
+def setup_simulation(ts, prefix=None, cheat_recombination=False, err=0):
     """
     Take the results of a simulation and return a sample data file, the
     corresponding recombination rate array, a prefix to use for files, and
@@ -135,13 +135,17 @@ def setup_simulation(ts, prefix, cheat_recombination=False, err=0):
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_times=False)
-    if cheat_recombination:
+    if cheat_recombination and prefix is not None:
         prefix += "cheat"
     if err == 0:
-        sd = plain_samples.copy(path=prefix+".samples")
+        sd = plain_samples.copy(path=None if prefix is None else prefix+".samples")
     else:
-        prefix += f"_ae{err}"
-        sd = add_errors(plain_samples, err, path=prefix+".samples")
+        if prefix is not None:
+            prefix += f"_ae{err}"
+        sd = add_errors(
+            plain_samples,
+            err,
+            path=None if prefix is None else prefix+".samples")
     sd.finalise()
     rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
