@@ -12,7 +12,8 @@ import stdpopsim
 
 Params = collections.namedtuple(
     "Params",
-    "sample_data, rec_rate, cutoff_exponent, precision, num_threads")
+    "sample_data, rec_rate, ma_mis_rate, ms_mis_rate, cutoff_exponent, precision, "
+    "num_threads")
 
 Results = collections.namedtuple(
     "Results",
