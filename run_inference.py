@@ -171,12 +171,7 @@ def setup_sample_file(args):
         rho = np.concatenate(
             ([0.0], d/sd.sequence_length))
 
-    if np.any(d==0):
-        w = np.where(d==0)
-        raise ValueError("Zero recombination rates at", w, inference_pos[w])
-
     return sd, rho, filename[:-len(".samples")], None
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
