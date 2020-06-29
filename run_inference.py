@@ -25,7 +25,7 @@ def run(params):
     Run a single inference, with the specified rates
     """
     rho = params.recombination_rate
-    av_rho = np.quantile(rho[rho > 0], 0.5)
+    av_rho = np.quantile(rho, 0.5)
     ma_mis = av_rho * params.ma_mis_rate
     ms_mis = av_rho * params.ms_mis_rate
 
@@ -42,7 +42,7 @@ def run(params):
         f"Starting {params.ma_mis_rate} {params.ms_mis_rate}",
         f"with av rho {av_rho:.5g}",
         f"(mean {np.mean(rho):.4g}, median {np.quantile(rho, 0.5):.4g}, ",
-        f"nonzero min {np.min(rho[>0]):.4g}, ",
+        f"nonzero min {np.min(rho[rho > 0]):.4g}, ",
         f"2.5% quantile {np.quantile(rho, 0.025):.4g}) precision {precision}")
     prefix = None
     if params.sample_data.path is not None:
@@ -216,8 +216,10 @@ if __name__ == "__main__":
         rho,
         args.mismatch_ancestors,
         args.mismatch_samples,
+        args.cutoff_exponent,
         args.precision,
-        args.num_threads)
+        args.num_threads,
+    )
     print(f"Running inference with {params}")
     with open(prefix + ".results", "wt") as file:
         result = run(params)
