@@ -25,7 +25,7 @@ def run(params):
     """
     Run a single inference, with the specified rates
     """
-    rho = params.recombination_rate
+    rho = params.rec_rate
     av_rho = np.quantile(rho, 0.5)
     ma_mis = av_rho * params.ma_mis_rate
     ms_mis = av_rho * params.ms_mis_rate
