@@ -77,7 +77,7 @@ def make_seq_errors_genotype_model(g, error_probs):
 
     return(np.reshape(genos,-1))
 
-    
+
 def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs):
     if random_seed is not None:
         np.random.seed(random_seed)
@@ -113,7 +113,7 @@ def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs
     new_sd.data["sites/alleles"][:] = alleles
     new_sd.data["sites/inference"][:] = inference
     return new_sd
-            
+
 
 def physical_to_genetic(recombination_map, input_physical_positions):
     map_pos = recombination_map.get_positions()
@@ -201,11 +201,11 @@ def setup_sample_file(args):
 
 Params = collections.namedtuple(
     "Params",
-    "sample_data, rec_rate, ma_mut_rate, ms_mut_rate, precision, num_threads")
+    "sample_data, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads")
 
 Results = collections.namedtuple(
     "Results",
-    "abs_ma_mut, abs_ms_mut, rel_ma_mut, rel_ms_mut, precision, edges, muts, num_trees, "
+    "abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, num_trees, "
     "kc, mean_node_children, var_node_children, process_time, ts_size, ts_path")
 
     
@@ -217,17 +217,17 @@ def run(params):
     base_rec_prob = np.quantile(rho, 0.5)
     if params.precision is None:
         # Smallest recombination rate
-        min_rho = int(np.ceil(-np.min(np.log10(rho))))
+        min_rho = int(np.ceil(-np.min(np.log10(rho[rho>0]))))
         # Smallest mean 
         av_min = int(np.ceil(-np.log10(
-            min(1, params.ma_mut_rate, params.ms_mut_rate) * base_rec_prob)))
+            min(1, params.ma_mis_rate, params.ms_mis_rate) * base_rec_prob)))
         precision = max(min_rho, av_min) + 3
     else:
         precision = params.precision
-    ma_mut = base_rec_prob * params.ma_mut_rate
-    ms_mut = base_rec_prob * params.ms_mut_rate
+    ma_mis = base_rec_prob * params.ma_mis_rate
+    ms_mis = base_rec_prob * params.ms_mis_rate
     print(
-        f"Starting {params.ma_mut_rate} {params.ms_mut_rate}",
+        f"Starting {params.ma_mis_rate} {params.ms_mis_rate}",
         f"with base rho {base_rec_prob:.5g}",
         f"(mean {np.mean(rho):.4g} median {np.quantile(rho, 0.5):.4g}",
         f"min {np.min(rho):.4g}, 2.5% quantile {np.quantile(rho, 0.025):.4g})",
@@ -238,8 +238,8 @@ def run(params):
         prefix = params.sample_data.path[0:-len(".samples")]
         inf_prefix = "{}_rma{}_rms{}_p{}".format(
             prefix,
-            params.ma_mut_rate,
-            params.ms_mut_rate,
+            params.ma_mis_rate,
+            params.ms_mis_rate,
             precision)
     start_time = time.process_time()
     anc = tsinfer.generate_ancestors(
@@ -247,27 +247,27 @@ def run(params):
         num_threads=params.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"GA done (rel_ma_mut:{params.ma_mut_rate}, rel_ms_mut:{params.ms_mut_rate})")
+    print(f"GA done (rel_ma_mis:{params.ma_mis_rate}, rel_ms_mis:{params.ms_mis_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=ma_mut)
+        mismatch_rate=ma_mis)
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
-    print(f"MA done: abs_ma_mut rate = {ma_mut}")
+    print(f"MA done: abs_ma_mis rate = {ma_mis}")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=ms_mut)
+        mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
-    print(f"MS done: abs_ms_mut rate = {ms_mut}")
+    print(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -293,10 +293,10 @@ def run(params):
     except FileNotFoundError:
         kc = None
     return Results(
-        abs_ma_mut=ma_mut,
-        abs_ms_mut=ms_mut,
-        rel_ma_mut=params.ma_mut_rate,
-        rel_ms_mut=params.ms_mut_rate,
+        abs_ma_mis=ma_mis,
+        abs_ms_mis=ms_mis,
+        rel_ma_mis=params.ma_mis_rate,
+        rel_ms_mis=params.ms_mis_rate,
         precision=precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
@@ -332,7 +332,7 @@ def run_replicate(rep, args):
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
     errs = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0001])
-    muts = np.array([10.0, 5.0. 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 0.0001])
+    muts = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 0.0001])
     param_iter = (
         Params(samples, rho, m, e, p, nt) for e in errs for m in muts for p in precision)
     with open(prefix + ".results", "wt") as file:
@@ -342,8 +342,8 @@ def run_replicate(rep, args):
                 # Save to a results file.
                 # NB this can be pasted into R and plotted using
                 # d <- read.table(stdin(), header=T)
-                # d$rel_ma <- factor(d$ma_mut / d$ms_mut)
-                # ggplot() + geom_line(data = d, aes(x = ms_mut, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
+                # d$rel_ma <- factor(d$ma_mis / d$ms_mis)
+                # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
                 print("\t".join(str(r) for r in result), file=file, flush=True)
 
 
@@ -368,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--precision", nargs='*', type=int, default=[],
         help="The precision, as a number of decimal places, which will affect the speed"
             " of the matching algorithm (higher precision: lower speed). If not given,"
-            " calculate the smallest of the recombination rates or mutation rates, and"
+            " calculate the smallest of the recombination rates or mismatch rates, and"
             " use the negative exponent of that number plus four. E.g. if the smallest"
             " recombination rate is 2.5e-6, use precision = 6+4 = 10")
     parser.add_argument("-t", "--num_threads", type=int, default=None,
