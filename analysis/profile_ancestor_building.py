@@ -205,7 +205,7 @@ Params = collections.namedtuple(
 
 Results = collections.namedtuple(
     "Results",
-    "abs_ma_mut, abs_ms_mut, rel_ma_mut, rel_ms_mut, cutoff_power, trim_oldest, "
+    "abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, cutoff_power, trim_oldest, "
     "precision, edges, muts, num_trees, "
     "kc, mean_node_children, var_node_children, process_time, ts_size, ts_path")
 
@@ -216,18 +216,18 @@ def run(params):
     """
     rho = params.rec_rate[1:]
     base_rec_prob = np.quantile(rho, 0.5)
-    ma_mut_rate = ms_mut_rate = 1.0
+    ma_mis_rate = ms_mis_rate = 1.0
     if params.precision is None:
         # Smallest recombination rate
         min_rho = int(np.ceil(-np.min(np.log10(rho))))
         # Smallest mean 
         av_min = int(np.ceil(-np.log10(
-            min(1, ma_mut_rate, ms_mut_rate) * base_rec_prob)))
+            min(1, ma_mis_rate, ms_mis_rate) * base_rec_prob)))
         precision = max(min_rho, av_min) + 3
     else:
         precision = params.precision
-    ma_mut = base_rec_prob * ma_mut_rate
-    ms_mut = base_rec_prob * ms_mut_rate
+    ma_mis = base_rec_prob * ma_mis_rate
+    ms_mis = base_rec_prob * ms_mis_rate
     print(
         f"Starting {params.cutoff_power}, trim_oldest={params.trim_oldest}",
         f"with base rho {base_rec_prob:.5g}",
@@ -240,8 +240,8 @@ def run(params):
         prefix = params.sample_data.path[0:-len(".samples")]
         inf_prefix = "{}_rma{}_rms{}_N{}_{}_p{}".format(
             prefix,
-            ma_mut_rate,
-            ms_mut_rate,
+            ma_mis_rate,
+            ms_mis_rate,
             params.cutoff_power,
             "trim" if params.trim_oldest else "norm",
             precision)
@@ -253,28 +253,28 @@ def run(params):
         num_threads=params.num_threads,
         path=None if inf_prefix is None else inf_prefix + ".ancestors",
     )
-    print(f"GA done (rel_ma_mut:{ma_mut_rate}, rel_ms_mut:{ms_mut_rate})")
+    print(f"GA done (rel_ma_mis:{ma_mis_rate}, rel_ms_mis:{ms_mis_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=ma_mut,
+        mismatch_rate=ma_mis,
     )
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
-    print(f"MA done: abs_ma_mut rate = {ma_mut}")
+    print(f"MA done: abs_ma_mis rate = {ma_mis}")
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mutation_rate=ms_mut)
+        mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
-    print(f"MS done: abs_ms_mut rate = {ms_mut}")
+    print(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -300,10 +300,10 @@ def run(params):
     except FileNotFoundError:
         kc = None
     return Results(
-        abs_ma_mut=ma_mut,
-        abs_ms_mut=ms_mut,
-        rel_ma_mut=ma_mut_rate,
-        rel_ms_mut=ms_mut_rate,
+        abs_ma_mis=ma_mis,
+        abs_ms_mis=ms_mis,
+        rel_ma_mis=params.ma_mis_rate,
+        rel_ms_mis=params.ms_mis_rate,
         cutoff_power=params.cutoff_power,
         trim_oldest=params.trim_oldest,
         precision=precision,
@@ -352,8 +352,8 @@ def run_replicate(rep, args):
                 # Save to a results file.
                 # NB this can be pasted into R and plotted using
                 # d <- read.table(stdin(), header=T)
-                # d$rel_ma <- factor(d$ma_mut / d$ms_mut)
-                # ggplot() + geom_line(data = d, aes(x = ms_mut, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
+                # d$rel_ma <- factor(d$ma_mis / d$ms_mis)
+                # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
                 print("\t".join(str(r) for r in result), file=file, flush=True)
 
 
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--precision", nargs='*', type=int, default=[],
         help="The precision, as a number of decimal places, which will affect the speed"
             " of the matching algorithm (higher precision: lower speed). If not given,"
-            " calculate the smallest of the recombination rates or mutation rates, and"
+            " calculate the smallest of the recombination rates or mismatch rates, and"
             " use the negative exponent of that number plus four. E.g. if the smallest"
             " recombination rate is 2.5e-6, use precision = 6+4 = 10")
     parser.add_argument("-t", "--num_threads", type=int, default=None,
