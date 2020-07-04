@@ -302,8 +302,8 @@ def run(params):
     return Results(
         abs_ma_mis=ma_mis,
         abs_ms_mis=ms_mis,
-        rel_ma_mis=params.ma_mis_rate,
-        rel_ms_mis=params.ms_mis_rate,
+        rel_ma_mis=ma_mis_rate,
+        rel_ms_mis=ms_mis_rate,
         cutoff_power=params.cutoff_power,
         trim_oldest=params.trim_oldest,
         precision=precision,
