@@ -74,7 +74,7 @@ def run(params):
     inferred_anc_ts = tsinfer.match_ancestors(
         params.sample_data,
         anc,
-        mutation_rate=ma_mis,
+        mismatch_rate=ma_mis,
         progress_monitor=tsinfer.cli.ProgressMonitor(1, 0, 1, 0, 0),
         **extra_params,
     )
@@ -83,7 +83,7 @@ def run(params):
     inferred_ts = tsinfer.match_samples(
         params.sample_data,
         inferred_anc_ts,
-        mutation_rate=ms_mis,
+        mismatch_rate=ms_mis,
         progress_monitor=tsinfer.cli.ProgressMonitor(1, 0, 0, 0, 1),
         **extra_params,
     )
@@ -183,10 +183,10 @@ if __name__ == "__main__":
             " use the physical distance between sites.")
     # The _mrate parameter defaults set from analysis ot 1000G, see
     # https://github.com/tskit-dev/tsinfer/issues/263#issuecomment-639060101
-    parser.add_argument("-A", "--mismatch_ancestors", type=float, default=5e-1,
+    parser.add_argument("-A", "--mismatch_ancestors", type=float, default=1,
         help="The mismatch probability in the match ancestors phase,"
             " as a fraction of the median recombination probability between sites")
-    parser.add_argument("-S", "--mismatch_samples", type=float, default=5e-2,
+    parser.add_argument("-S", "--mismatch_samples", type=float, default=1,
         help="The mismatch probability in the match samples phase,"
             " as a fraction of the median recombination probability between sites")
     parser.add_argument("-p", "--precision", type=int, default=None,
