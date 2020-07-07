@@ -125,6 +125,7 @@ def run(params):
         muts=inferred_ts.num_mutations,
         num_trees=inferred_ts.num_trees,
         kc=kc,
+        cutoff_exponent=params.cutoff_exponent,
         mean_node_children=nc_mean,
         var_node_children=nc_var,
         process_time=process_time,
