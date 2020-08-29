@@ -1,3 +1,4 @@
 tsinfer_venv
+.DS_Store
 __pycache__/
 _versions/
