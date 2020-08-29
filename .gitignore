@@ -1,4 +1,5 @@
 tsinfer_venv
 .DS_Store
+*-checkpoint.ipynb
 __pycache__/
 _versions/
