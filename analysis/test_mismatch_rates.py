@@ -8,6 +8,7 @@ import collections
 import multiprocessing
 import re
 import time
+import logging
 
 import pandas as pd
 import msprime
@@ -16,7 +17,19 @@ import numpy as np
 import stdpopsim #  Requires a version of msprime which allows gene conversion
 import tsinfer
 
-def simulate_human(random_seed=123, each_pop_n=100):
+from error_generation import add_errors
+
+
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+
+def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwargs):
+    raise NotImplementedError
+
+
+def simulate_human(random_seed=123, each_pop_n=10):
+    logger.debug(
+        f"Simulation Hom_sap using stdpopsim with 3x{each_pop_n} samples")
     species = stdpopsim.get_species("HomSap")
     contig = species.get_contig("chr20")
     r_map = contig.recombination_map
@@ -32,8 +45,8 @@ def simulate_human(random_seed=123, each_pop_n=100):
     l = ts.sequence_length
     # cut down ts for speed
     return (
-        ts.keep_intervals([[int(l * 3/20), int(l * 6/20)]]).trim(),
-        f"data/OOA_sim_seed{random_seed}")
+        ts.keep_intervals([[int(l * 3/20), int(l * 4/20)]]).trim(),
+        f"data/OOA_sim_n{each_pop_n*3}_seed{random_seed}")
 
 def test_sim(seed):
     ts = msprime.simulate(
@@ -44,76 +57,6 @@ def test_sim(seed):
         random_seed=seed)
     return ts, f"data/test_sim{seed}"
 
-def make_seq_errors_genotype_model(g, error_probs):
-    """
-    Given an empirically estimated error probability matrix, resample for a particular
-    variant. Determine variant frequency and true genotype (g0, g1, or g2),
-    then return observed genotype based on row in error_probs with nearest
-    frequency. Treat each pair of alleles as a diploid individual.
-    """
-    m = g.shape[0]
-    frequency = np.sum(g) / m
-    closest_row = (error_probs['freq']-frequency).abs().argsort()[:1]
-    closest_freq = error_probs.iloc[closest_row]
-
-    w = np.copy(g)
-    
-    # Make diploid (iterate each pair of alleles)
-    genos = np.reshape(w,(-1,2))
-
-    # Record the true genotypes (0,0=>0; 1,0=>1; 0,1=>2, 1,1=>3)
-    count = np.sum(np.array([1,2]) * genos,axis=1)
-    
-    base_genotypes = np.array([[0, 0], [1, 0], [0, 1], [1, 1]])
-    
-    genos[count==0,:]=base_genotypes[
-        np.random.choice(4,sum(count==0), p=closest_freq[['p00', 'p01','p01', 'p02']].values[0]*[1,0.5,0.5,1]),:]
-    genos[count==1,:]=base_genotypes[[0,1,3],:][
-        np.random.choice(3,sum(count==1), p=closest_freq[['p10', 'p11', 'p12']].values[0]),:]
-    genos[count==2,:]=base_genotypes[[0,2,3],:][
-        np.random.choice(3,sum(count==2), p=closest_freq[['p10', 'p11', 'p12']].values[0]),:]
-    genos[count==3,:]=base_genotypes[
-        np.random.choice(4,sum(count==3), p=closest_freq[['p20', 'p21', 'p21', 'p22']].values[0]*[1,0.5,0.5,1]),:]
-
-    return(np.reshape(genos,-1))
-
-
-def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs):
-    if random_seed is not None:
-        np.random.seed(random_seed)
-    if sample_data.num_samples % 2 != 0:
-        raise ValueError("Must have an even number of samples to inject error")
-    error_probs = pd.read_csv("data/EmpiricalErrorPlatinum1000G.csv")
-    n_variants = 0
-    aa_error_by_site = np.zeros(sample_data.num_sites, dtype=np.bool)
-    if ancestral_allele_error > 0:
-        assert ancestral_allele_error <= 1
-        n_bad_sites = round(ancestral_allele_error*sample_data.num_sites)
-        # This gives *exactly* a proportion aa_error or bad sites
-        # NB - to to this probabilitistically, use np.binomial(1, e, ts.num_sites)
-        aa_error_by_site[0:n_bad_sites] = True
-        np.random.shuffle(aa_error_by_site)
-    new_sd = sample_data.copy(**kwargs)
-    genotypes = new_sd.data["sites/genotypes"][:]  # Could be big
-    alleles = new_sd.data["sites/alleles"][:]
-    inference = new_sd.data["sites/inference"][:]
-    
-    for i, (ancestral_allele_error, v) in enumerate(zip(
-            aa_error_by_site, sample_data.variants())):
-        if ancestral_allele_error and len(v.site.alleles)==2:
-            genotypes[i, :] = 1-v.genotypes
-            alleles[i] = list(reversed(alleles[i]))
-        genotypes[i, :] = make_seq_errors_genotype_model(
-            genotypes[i, :], error_probs)
-        if np.all(genotypes[i, :] == 1) or np.sum(genotypes[i, :]) < 2: 
-            inference[i] = False
-        else:
-            inference[i] = True
-    new_sd.data["sites/genotypes"][:] = genotypes
-    new_sd.data["sites/alleles"][:] = alleles
-    new_sd.data["sites/inference"][:] = inference
-    return new_sd
-
 
 def physical_to_genetic(recombination_map, input_physical_positions):
     map_pos = recombination_map.get_positions()
@@ -122,10 +65,11 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(ts, prefix=None, random_seed=None, cheat_recombination=False, err=0):
+def setup_simulation(
+    ts, prefix, random_seed=None, cheat_recombination=False, err=0, num_threads=1):
     """
-    Take the results of a simulation and return a sample data file, the
-    corresponding recombination rate array, a prefix to use for files, and
+    Take the results of a simulation and return a sample data file, some reconstructed
+    ancestors, a recombination rate array, a prefix to use for files, and
     the original tree sequence.
     
     If "cheat_recombination" is true, multiply the recombination_rate for known
@@ -137,42 +81,60 @@ def setup_simulation(ts, prefix=None, random_seed=None, cheat_recombination=Fals
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_times=False)
-    if cheat_recombination and prefix is not None:
+    if cheat_recombination:
         prefix += "cheat"
     if err == 0:
-        sd = plain_samples.copy(path=None if prefix is None else prefix+".samples")
+        sd = plain_samples.copy(path=prefix + ".samples")
     else:
-        if prefix is not None:
-            prefix += f"_ae{err}"
+        prefix += f"_ae{err}"
         sd = add_errors(
             plain_samples,
             err,
             random_seed=random_seed,
-            path=None if prefix is None else prefix+".samples")
+            path=prefix+".samples")
     sd.finalise()
-    rho = np.diff(sd.sites_position[:][sd.sites_inference])/sd.sequence_length
+
+    anc = tsinfer.generate_ancestors(
+        sd,
+        num_threads=num_threads,
+        path=prefix+".ancestors",
+    )
+    logger.info("GA done")
+
+    inference_pos = anc.sites_position[:]
+
+    rho = np.diff(anc.sites_position[:])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
     if cheat_recombination:
         breakpoint_positions = np.array(list(ts.breakpoints()))
-        inference_positions = sd.sites_position[:][sd.sites_inference[:] == 1]
+        inference_positions = anc.sites_position[:]
         breakpoints = np.searchsorted(inference_positions, breakpoint_positions)
         # Any after the last inference position must be junked
         # (those before the first inference position make no difference)
         breakpoints = breakpoints[breakpoints != len(rho)]
         rho[breakpoints] *= 20
-    return sd, rho, prefix, ts
+    return sd.path, anc.path, rho, prefix, ts
 
-def setup_sample_file(args):
+def setup_sample_file(args, num_threads=1):
     """
-    Return a Thousand Genomes Project sample data file, the
+    Return a Thousand Genomes Project sample data file, the ancestors file, a
     corresponding recombination rate array, a prefix to use for files, and None
     """
     filename = args.sample_file
     map = args.genetic_map
     if not filename.endswith(".samples"):
         raise ValueError("Sample data file must end with '.samples'")
+    base_filename = filename[:len(".samples")]
     sd = tsinfer.load(filename)
-    inference_pos = sd.sites_position[:][sd.sites_inference[:]]
+
+    anc = tsinfer.generate_ancestors(
+        sd,
+        num_threads=num_threads,
+        path=base_filename + ".ancestors",
+    )
+    logger.info("GA done")
+
+    inference_pos = anc.sites_position[:]
 
     match = re.search(r'(chr\d+)', filename)
     if match or map is not None:
@@ -180,7 +142,7 @@ def setup_sample_file(args):
             chr_map = msprime.RecombinationMap.read_hapmap(map)
         else:
             chr = match.group(1)
-            print(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
+            logger.info(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
             map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
             if not map.is_cached():
                 map.download()
@@ -196,17 +158,17 @@ def setup_sample_file(args):
         w = np.where(d==0)
         raise ValueError("Zero recombination rates at", w, inference_pos[w])
 
-    return sd, rho, filename[:-len(".samples")], None
+    return sd.path, anc.path, rho, filename[:-len(".samples")], None
 
 
 Params = collections.namedtuple(
     "Params",
-    "sample_data, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads")
+    "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads")
 
 Results = collections.namedtuple(
     "Results",
-    "abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, num_trees, "
-    "kc, mean_node_children, var_node_children, process_time, ts_size, ts_path")
+    "n, abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, "
+    "num_trees, kc_poly, kc_split, arity_mean, arity_var, proc_time, ts_size, ts_path")
 
     
 def run(params):
@@ -226,39 +188,36 @@ def run(params):
         precision = params.precision
     ma_mis = base_rec_prob * params.ma_mis_rate
     ms_mis = base_rec_prob * params.ms_mis_rate
-    print(
-        f"Starting {params.ma_mis_rate} {params.ms_mis_rate}",
-        f"with base rho {base_rec_prob:.5g}",
-        f"(mean {np.mean(rho):.4g} median {np.quantile(rho, 0.5):.4g}",
-        f"min {np.min(rho):.4g}, 2.5% quantile {np.quantile(rho, 0.025):.4g})",
-        f"precision {precision}")
+    logger.info(
+        f"Starting {params.ma_mis_rate} {params.ms_mis_rate} " +
+        f"with base rho {base_rec_prob:.5g} " +
+        f"(mean {np.mean(rho):.4g} median {np.quantile(rho, 0.5):.4g} " +
+        f"min {np.min(rho):.4g}, 2.5% quantile {np.quantile(rho, 0.025):.4g}) " +
+        f"precision {precision}"
+    )
     prefix = None
-    if params.sample_data.path is not None:
-        assert params.sample_data.path.endswith(".samples")
-        prefix = params.sample_data.path[0:-len(".samples")]
-        inf_prefix = "{}_rma{}_rms{}_p{}".format(
+    assert params.sample_file.endswith(".samples")
+    assert params.anc_file.endswith(".ancestors")
+    samples = tsinfer.load(params.sample_file)
+    ancestors = tsinfer.load(params.anc_file)
+    prefix = params.sample_file[0:-len(".samples")]
+    inf_prefix = "{}_rma{}_rms{}_p{}".format(
             prefix,
             params.ma_mis_rate,
             params.ms_mis_rate,
             precision)
     start_time = time.process_time()
-    anc = tsinfer.generate_ancestors(
-        params.sample_data,
-        num_threads=params.num_threads,
-        path=None if inf_prefix is None else inf_prefix + ".ancestors",
-    )
-    print(f"GA done (rel_ma_mis:{params.ma_mis_rate}, rel_ms_mis:{params.ms_mis_rate})")
     inferred_anc_ts = tsinfer.match_ancestors(
-        params.sample_data,
-        anc,
+        samples,
+        ancestors,
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
         mismatch_rate=ma_mis)
     inferred_anc_ts.dump(path=inf_prefix + ".atrees")
-    print(f"MA done: abs_ma_mis rate = {ma_mis}")
+    logger.info(f"MA done: abs_ma_mis rate = {ma_mis}")
     inferred_ts = tsinfer.match_samples(
-        params.sample_data,
+        samples,
         inferred_anc_ts,
         num_threads=params.num_threads,
         precision=precision,
@@ -267,7 +226,7 @@ def run(params):
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
     inferred_ts.dump(path=ts_path)
-    print(f"MS done: abs_ms_mis rate = {ms_mis}")
+    logger.info(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -281,18 +240,25 @@ def run(params):
                 nc_sum +=  n_children * tree.span
                 nc_sum_sq += (n_children ** 2) * tree.span
                 nc_tot += tree.span
-    nc_mean = nc_sum/nc_tot
-    nc_var = nc_sum_sq / nc_tot - (nc_mean ** 2) # can't be bothered to adjust for n
+    arity_mean = nc_sum/nc_tot
+    arity_var = nc_sum_sq / nc_tot - (arity_mean ** 2) # can't be bothered to adjust for n
 
     # Calculate span of root nodes in simplified tree
     
 
     # Calculate KC
     try:
-        kc = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
+        kc_poly = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
+        logger.debug("KC poly calculated")
+        polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
+            random_seed=123)
+        logger.debug("Polytomies split for KC calc")
+        kc_split = polytomies_split_ts.kc_distance(tskit.load(prefix+".trees"))
+        logger.debug("KC split calculated")
     except FileNotFoundError:
-        kc = None
+        kc_poly = kc_split = None
     return Results(
+        n=inferred_ts.num_samples,
         abs_ma_mis=ma_mis,
         abs_ms_mis=ms_mis,
         rel_ma_mis=params.ma_mis_rate,
@@ -301,10 +267,11 @@ def run(params):
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
         num_trees=inferred_ts.num_trees,
-        kc=kc,
-        mean_node_children=nc_mean,
-        var_node_children=nc_var,
-        process_time=process_time,
+        kc_poly=kc_poly,
+        kc_split=kc_split,
+        arity_mean=arity_mean,
+        arity_var=arity_var,
+        proc_time=process_time,
         ts_size=os.path.getsize(ts_path),
         ts_path=ts_path)
 
@@ -319,33 +286,42 @@ def run_replicate(rep, args):
         precision = args.precision
     nt = 2 if args.num_threads is None else args.num_threads
     if args.sample_file is None:
-        # Simulate
+        logger.debug("Simulating human chromosome")
         sim = simulate_human(seed)
-        samples, rho, prefix, ts = setup_simulation(
+        sample_file, anc_file, rho, prefix, ts = setup_simulation(
             *sim,
             random_seed=seed,
             cheat_recombination=args.cheat_breakpoints,
-            err=args.error)
+            err=args.error,
+            num_threads=nt,
+        )
     else:
-        samples, rho, prefix, ts = setup_sample_file(args)
+        logger.debug("Using provided sample data file")
+        sample_file, anc_file, rho, prefix, ts = setup_sample_file(args, num_threads=nt)
     if ts is not None:
         ts.dump(prefix + ".trees")
     # Set up the range of params for multiprocessing
-    errs = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0001])
-    muts = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 0.0001])
+    errs = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0001, 0.00001])
+    muts = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 0.0001, 0.00001])
     param_iter = (
-        Params(samples, rho, m, e, p, nt) for e in errs for m in muts for p in precision)
-    with open(prefix + ".results", "wt") as file:
+        Params(sample_file, anc_file, rho, m, e, p, nt) for e in errs for m in muts for p in precision)
+    results_filename = prefix + ".results"
+    with open(results_filename, "wt") as file:
         print("\t".join(Results._fields), file=file, flush=True)
-        with multiprocessing.Pool(40) as pool:
-            for result in pool.imap_unordered(run, param_iter):
-                # Save to a results file.
-                # NB this can be pasted into R and plotted using
-                # d <- read.table(stdin(), header=T)
-                # d$rel_ma <- factor(d$ma_mis / d$ms_mis)
-                # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
+        if nt < 2:
+            for p in param_iter:
+                result=run(p)
                 print("\t".join(str(r) for r in result), file=file, flush=True)
-
+        else:
+            with multiprocessing.Pool(40) as pool:
+                for result in pool.imap_unordered(run, param_iter):
+                    # Save to a results file.
+                    # NB this can be pasted into R and plotted using
+                    # d <- read.table(stdin(), header=T)
+                    # d$rel_ma <- factor(d$ma_mis / d$ms_mis)
+                    # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
+                    print("\t".join(str(r) for r in result), file=file, flush=True)
+    logger.info(f"Results saved to {results_filename}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -376,8 +352,17 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--genetic_map", default=None,
         help="An alternative genetic map to be used for this analysis, in the format"
             "expected by msprime.RecombinationMap.read_hapmap")
+    parser.add_argument("-v", "--verbosity", action="count", default=0,
+        help="Increase the verbosity")
     args = parser.parse_args()
-    
+
+    log_level = logging.WARN
+    if args.verbosity > 0:
+        log_level = logging.INFO
+    if args.verbosity > 1:
+        log_level = logging.DEBUG
+    logger.setLevel(log_level)
 
     for rep in range(args.replicates):
+        logger.debug(f"Running replicate {rep}")
         run_replicate(rep, args)
