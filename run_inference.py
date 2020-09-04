@@ -184,10 +184,10 @@ if __name__ == "__main__":
             " use the physical distance between sites.")
     # The _mrate parameter defaults set from analysis ot 1000G, see
     # https://github.com/tskit-dev/tsinfer/issues/263#issuecomment-639060101
-    parser.add_argument("-A", "--mismatch_ancestors", type=float, default=1,
+    parser.add_argument("-A", "--mismatch_ancestors", type=float, default=0.1,
         help="The mismatch probability in the match ancestors phase,"
             " as a fraction of the median recombination probability between sites")
-    parser.add_argument("-S", "--mismatch_samples", type=float, default=1,
+    parser.add_argument("-S", "--mismatch_samples", type=float, default=0.1,
         help="The mismatch probability in the match samples phase,"
             " as a fraction of the median recombination probability between sites")
     parser.add_argument("-p", "--precision", type=int, default=None,
