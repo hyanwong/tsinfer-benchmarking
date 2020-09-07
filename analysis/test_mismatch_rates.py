@@ -92,7 +92,6 @@ def setup_simulation(
             err,
             random_seed=random_seed,
             path=prefix+".samples")
-    sd.finalise()
 
     anc = tsinfer.generate_ancestors(
         sd,
