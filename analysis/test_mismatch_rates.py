@@ -27,8 +27,8 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
     raise NotImplementedError
 
 
-def simulate_human(random_seed=123, each_pop_n=10):
-    logger.debug(
+def simulate_human(random_seed=123, each_pop_n=500):
+    logger.info(
         f"Simulation Hom_sap using stdpopsim with 3x{each_pop_n} samples")
     species = stdpopsim.get_species("HomSap")
     contig = species.get_contig("chr20")
@@ -66,26 +66,35 @@ def physical_to_genetic(recombination_map, input_physical_positions):
 
 
 def setup_simulation(
-    ts, prefix, random_seed=None, cheat_recombination=False, err=0, num_threads=1):
+    ts, prefix, random_seed=None, err=0, num_threads=1,
+    cheat_breakpoints=False, use_site_times=False):
     """
     Take the results of a simulation and return a sample data file, some reconstructed
     ancestors, a recombination rate array, a prefix to use for files, and
     the original tree sequence.
     
-    If "cheat_recombination" is true, multiply the recombination_rate for known
-    recombination locations from the simulation by 20
-    
     If 'err' is 0, we do not inject any errors into the haplotypes. Otherwise
     we add empirical sequencing error and ancestral allele polarity error
     
+    If "cheat_recombination" is True, multiply the recombination_rate for known
+    recombination locations from the simulation by 20
+
+    If "use_site_times" is True, use the times     
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
-        ts, use_times=False)
-    if cheat_recombination:
-        prefix += "cheat"
+        ts, use_times=use_site_times)
+    if cheat_breakpoints:
+        prefix += "cheat_breakpoints"
+        logger.info("Cheating by using known breakpoints")
+    if use_site_times:
+        prefix += "use_times"
+        logger.info("Cheating by using known times")
     if err == 0:
+        # Save the samples file by copying
         sd = plain_samples.copy(path=prefix + ".samples")
+        sd.finalise()
     else:
+        logger.info("Adding error")
         prefix += f"_ae{err}"
         sd = add_errors(
             plain_samples,
@@ -104,7 +113,7 @@ def setup_simulation(
 
     rho = np.diff(anc.sites_position[:])/sd.sequence_length
     rho = np.concatenate(([0.0], rho))
-    if cheat_recombination:
+    if cheat_breakpoints:
         breakpoint_positions = np.array(list(ts.breakpoints()))
         inference_positions = anc.sites_position[:]
         breakpoints = np.searchsorted(inference_positions, breakpoint_positions)
@@ -290,9 +299,10 @@ def run_replicate(rep, args):
         sample_file, anc_file, rho, prefix, ts = setup_simulation(
             *sim,
             random_seed=seed,
-            cheat_recombination=args.cheat_breakpoints,
             err=args.error,
             num_threads=nt,
+            cheat_breakpoints=args.cheat_breakpoints,
+            use_site_times=args.use_site_times,
         )
     else:
         logger.debug("Using provided sample data file")
@@ -337,8 +347,11 @@ if __name__ == "__main__":
         help="Add sequencing and ancestral state error to the haplotypes before"
             "inferring. The value here gives the probability of ancestral state"
             "error")
-    parser.add_argument("-c", "--cheat_breakpoints", action='store_true',
-        help="Cheat when using simulated data by increasing the recombination"
+    parser.add_argument("-T", "--use_site_times", action='store_true',
+        help="When using simulated data, cheat by using the times for sites (ancestors)"
+            "from the simulation")
+    parser.add_argument("-B", "--cheat_breakpoints", action='store_true',
+        help="When using simulated data, cheat by increasing the recombination"
             "probability in regions where there is a true breakpoint")
     parser.add_argument("-p", "--precision", nargs='*', type=int, default=[],
         help="The precision, as a number of decimal places, which will affect the speed"
