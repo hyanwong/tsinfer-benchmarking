@@ -92,15 +92,22 @@ def setup_simulation(
     if err == 0:
         # Save the samples file by copying
         sd = plain_samples.copy(path=prefix + ".samples")
-        sd.finalise()
     else:
         logger.info("Adding error")
         prefix += f"_ae{err}"
-        sd = add_errors(
+        error_file = add_errors(
             plain_samples,
             err,
-            random_seed=random_seed,
-            path=prefix+".samples")
+            random_seed=random_seed)
+        sd = error_file.copy(path=prefix+".samples")
+        if use_site_times:
+            # Sites that were originally singletons have time 0, but could have been
+            # converted to inference sites when adding error. Give these a nonzero time
+            sites_time = sd.sites_time
+            sites_time[sites_time == 0] = np.min(sites_time[sites_time > 0])/1000.0
+            sd.sites_time[:] = sites_time
+    sd.finalise()
+
 
     anc = tsinfer.generate_ancestors(
         sd,
