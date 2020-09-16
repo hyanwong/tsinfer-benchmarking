@@ -229,7 +229,7 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
     raise NotImplementedError
 
 
-def simulate_human(random_seed=123, each_pop_n=5):
+def simulate_human(random_seed=123, each_pop_n=500):
     logger.info(
         f"Simulation Hom_sap using stdpopsim with 3x{each_pop_n} samples")
     species = stdpopsim.get_species("HomSap")
