@@ -218,8 +218,7 @@ def randomly_split_polytomies(
     return self.tree_sequence()
 
 # Monkey-patch until https://github.com/tskit-dev/tskit/pull/815 is merged
-tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies
-
+tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies        
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -231,7 +230,7 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
 
 def simulate_human(random_seed=123, each_pop_n=500):
     logger.info(
-        f"Simulation Hom_sap using stdpopsim with 3x{each_pop_n} samples")
+        f"Simulating HomSap from stdpopsim: 3x{each_pop_n} samples, seed {random_seed}")
     species = stdpopsim.get_species("HomSap")
     contig = species.get_contig("chr20")
     r_map = contig.recombination_map
@@ -245,10 +244,10 @@ def simulate_human(random_seed=123, each_pop_n=500):
         gene_conversion_track_length=300,
         seed=random_seed)
     l = ts.sequence_length
-    # cut down ts for speed
     return (
-        ts.keep_intervals([[int(l * 3/20), int(l * 4/20)]]).trim(),
-        f"data/OOA_sim_n{each_pop_n*3}_seed{random_seed}")
+        # cut down ts for speed
+        ts.keep_intervals([[int(l * 2/20), int(l * 5/20)]]).trim(),
+        f"data/OOA_sim_n{each_pop_n*3}")
 
 def test_sim(seed):
     ts = msprime.simulate(
@@ -268,7 +267,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
 
 
 def setup_simulation(
-    ts, prefix, random_seed=None, err=0, num_threads=1,
+    ts, prefix, random_seed, err=0, num_threads=1,
     cheat_breakpoints=False, use_site_times=False):
     """
     Take the results of a simulation and return a sample data file, some reconstructed
@@ -296,7 +295,7 @@ def setup_simulation(
         sd = plain_samples.copy(path=prefix + ".samples")
     else:
         logger.info("Adding error")
-        prefix += f"_ae{err}"
+        prefix += f"_ae{err}_seed{random_seed}"
         error_file = add_errors(
             plain_samples,
             err,
@@ -380,12 +379,16 @@ def setup_sample_file(args, num_threads=1):
 
 Params = collections.namedtuple(
     "Params",
-    "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads")
+    "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
+    "kc_polymax, seed, error"
+)
 
 Results = collections.namedtuple(
     "Results",
     "n, abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, "
-    "num_trees, kc_poly, kc_split, arity_mean, arity_var, proc_time, ts_size, ts_path")
+    "num_trees, kc_polymax, kc_poly, kc_split, arity_mean, arity_var, "
+    "seed, error, proc_time, ts_size, ts_path"
+)
 
     
 def run(params):
@@ -431,7 +434,7 @@ def run(params):
         precision=precision,
         recombination_rate=params.rec_rate,
         mismatch_rate=ma_mis)
-    inferred_anc_ts.dump(path=inf_prefix + ".atrees")
+    inferred_anc_ts.dump(inf_prefix + ".atrees")
     logger.info(f"MA done: abs_ma_mis rate = {ma_mis}")
     inferred_ts = tsinfer.match_samples(
         samples,
@@ -442,7 +445,7 @@ def run(params):
         mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
     ts_path = inf_prefix + ".trees"
-    inferred_ts.dump(path=ts_path)
+    inferred_ts.dump(ts_path)
     logger.info(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
@@ -468,7 +471,7 @@ def run(params):
         kc_poly = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
         logger.debug("KC poly calculated")
         polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
-            random_seed=123)
+            random_seed=params.seed)
         logger.debug("Polytomies split for KC calc")
         kc_split = polytomies_split_ts.kc_distance(tskit.load(prefix+".trees"))
         logger.debug("KC split calculated")
@@ -480,19 +483,26 @@ def run(params):
         abs_ms_mis=ms_mis,
         rel_ma_mis=params.ma_mis_rate,
         rel_ms_mis=params.ms_mis_rate,
+        error=params.error,
         precision=precision,
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
         num_trees=inferred_ts.num_trees,
+        kc_polymax=params.kc_polymax,
         kc_poly=kc_poly,
         kc_split=kc_split,
         arity_mean=arity_mean,
         arity_var=arity_var,
+        seed=params.seed,
         proc_time=process_time,
         ts_size=os.path.getsize(ts_path),
         ts_path=ts_path)
 
-def run_replicate(rep, args):
+def print_header(file):
+    print("\t".join(Results._fields), file=file, flush=True)
+
+
+def run_replicate(rep, args, header=True):
     """
     The main function that runs a parameter set
     """
@@ -502,6 +512,7 @@ def run_replicate(rep, args):
     else:
         precision = args.precision
     nt = 2 if args.num_threads is None else args.num_threads
+    kc_polymax = None
     if args.sample_file is None:
         logger.debug("Simulating human chromosome")
         sim = simulate_human(seed)
@@ -518,20 +529,23 @@ def run_replicate(rep, args):
         sample_file, anc_file, rho, prefix, ts = setup_sample_file(args, num_threads=nt)
     if ts is not None:
         ts.dump(prefix + ".trees")
-    # Set up the range of params for multiprocessing
-    errs = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0001, 0.00001])
-    muts = np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 0.0001, 0.00001])
+        star_tree = tskit.Tree.unrank((0,0),ts.num_samples, span=ts.sequence_length)
+        kc_polymax = ts.simplify().kc_distance(star_tree.tree_sequence)
     param_iter = (
-        Params(sample_file, anc_file, rho, m, e, p, nt) for e in errs for m in muts for p in precision)
+        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_polymax, seed, args.error)
+            for rms in args.match_samples_mismatch
+                for rma in args.match_ancestors_mismatch
+                    for p in precision)
     results_filename = prefix + ".results"
     with open(results_filename, "wt") as file:
-        print("\t".join(Results._fields), file=file, flush=True)
-        if nt < 2:
+        if header:
+            print_header(file)
+        if args.num_processes < 2:
             for p in param_iter:
                 result=run(p)
                 print("\t".join(str(r) for r in result), file=file, flush=True)
         else:
-            with multiprocessing.Pool(40) as pool:
+            with multiprocessing.Pool(args.num_processes) as pool:
                 for result in pool.imap_unordered(run, param_iter):
                     # Save to a results file.
                     # NB this can be pasted into R and plotted using
@@ -540,8 +554,17 @@ def run_replicate(rep, args):
                     # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
                     print("\t".join(str(r) for r in result), file=file, flush=True)
     logger.info(f"Results saved to {results_filename}")
+    return results_filename
 
 if __name__ == "__main__":
+
+
+    # Set up the range of params for multiprocessing
+    default_relative_match_samples_mismatch = np.array(
+        [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 1e-5])
+    default_relative_match_ancestors_mismatch = np.array(
+        [10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 1e-3, 1e-4, 1e-5])
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sample_file", nargs='?', default=None,
         help="A tsinfer sample file ending in '.samples'. If given, do not"
@@ -556,20 +579,44 @@ if __name__ == "__main__":
         help="Add sequencing and ancestral state error to the haplotypes before"
             "inferring. The value here gives the probability of ancestral state"
             "error")
+    parser.add_argument("-A", "--match_ancestors_mismatch", nargs='*', type=float,
+        default=default_relative_match_ancestors_mismatch,
+        help = (
+            "A list of values for the relative match_ancestors mismatch rate."
+            "The rate is relative to the median recombination rate between sites")
+    )
+    parser.add_argument("-S", "--match_samples_mismatch", nargs='*', type=float,
+        default=default_relative_match_samples_mismatch,
+        help =
+            "A list of values for the relative match_samples mismatch rate. "
+            "The rate is relative to the median recombination rate between sites"
+    )
     parser.add_argument("-T", "--use_site_times", action='store_true',
-        help="When using simulated data, cheat by using the times for sites (ancestors)"
+        help=
+            "When using simulated data, cheat by using the times for sites (ancestors)"
             "from the simulation")
+    parser.add_argument("-P", "--precision", nargs='*', type=int, default=[],
+        help=
+            "The precision, as a number of decimal places, which will affect the speed "
+            "of the matching algorithm (higher precision: lower speed). If not given, "
+            "calculate the smallest of the recombination rates or mismatch rates, and "
+            "use the negative exponent of that number plus four. E.g. if the smallest "
+            "recombination rate is 2.5e-6, use precision = 6+4 = 10"
+    )
     parser.add_argument("-B", "--cheat_breakpoints", action='store_true',
-        help="When using simulated data, cheat by increasing the recombination"
+        help=
+            "When using simulated data, cheat by increasing the recombination"
             "probability in regions where there is a true breakpoint")
-    parser.add_argument("-p", "--precision", nargs='*', type=int, default=[],
-        help="The precision, as a number of decimal places, which will affect the speed"
-            " of the matching algorithm (higher precision: lower speed). If not given,"
-            " calculate the smallest of the recombination rates or mismatch rates, and"
-            " use the negative exponent of that number plus four. E.g. if the smallest"
-            " recombination rate is 2.5e-6, use precision = 6+4 = 10")
     parser.add_argument("-t", "--num_threads", type=int, default=None,
-        help="The number of threads to use in each inference subprocess")
+        help=
+            "The number of threads to use in each inference subprocess. "
+            "Normally, "
+    )
+    parser.add_argument("-p", "--num_processes", type=int, default=40,
+        help=
+            "The number of processors that can be pooled to parallelise runs"
+            "under different parameter values."
+    )
     parser.add_argument("-m", "--genetic_map", default=None,
         help="An alternative genetic map to be used for this analysis, in the format"
             "expected by msprime.RecombinationMap.read_hapmap")
@@ -584,6 +631,28 @@ if __name__ == "__main__":
         log_level = logging.DEBUG
     logger.setLevel(log_level)
 
+    multiple_replicates = args.replicates > 1
+    filenames = []
     for rep in range(args.replicates):
+        # NB: this doesn't allow parallelising of replicates
         logger.debug(f"Running replicate {rep}")
-        run_replicate(rep, args)
+        filenames.append(run_replicate(rep, args, header=not multiple_replicates))
+        print(filenames)
+    if multiple_replicates:
+        # Combine the replicates files together
+        same_prefix = ""
+        for char in zip(*filenames):
+            if len(set(char)) > 1:
+                break
+            same_prefix += char[0]
+        final_filename = same_prefix + ".results"
+        if len(same_prefix) == 0 or final_filename in filenames:
+            raise ValueError(
+                f"{final_filename} invalid. Original results accessible in {filenames}")
+        with open(final_filename, "wt") as final_file:
+            print_header(final_file)
+            for result_filename in filenames:
+                with open(result_filename, "rt") as results_file:
+                    for line in results_file:
+                        final_file.write(line)
+        logger.info(f"Final results integrated into {final_filename}")
