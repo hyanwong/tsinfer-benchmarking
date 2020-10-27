@@ -529,7 +529,8 @@ def run_replicate(rep, args, header=True):
         sample_file, anc_file, rho, prefix, ts = setup_sample_file(args, num_threads=nt)
     if ts is not None:
         ts.dump(prefix + ".trees")
-        star_tree = tskit.Tree.unrank((0,0),ts.num_samples, span=ts.sequence_length)
+        star_tree = tskit.Tree.generate_star(
+            ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_polymax = ts.simplify().kc_distance(star_tree.tree_sequence)
     param_iter = (
         Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_polymax, seed, args.error)
