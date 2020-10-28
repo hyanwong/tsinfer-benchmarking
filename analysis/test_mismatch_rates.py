@@ -534,11 +534,11 @@ def run_replicate(rep, args, header=True):
         star_tree = tskit.Tree.generate_star(
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_polymax = ts.simplify().kc_distance(star_tree.tree_sequence)
-    param_iter = (
+    param_iter = [
         Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_polymax, seed, args.error)
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
-                    for p in precision)
+                    for p in precision]
     results_filename = prefix + ".results"
     with open(results_filename, "wt") as file:
         if header:
@@ -548,6 +548,9 @@ def run_replicate(rep, args, header=True):
                 result=run(p)
                 print("\t".join(str(r) for r in result), file=file, flush=True)
         else:
+            logging.info(
+                f"Parallelising {len(param_iter)} parameter combinations "
+                f"over {args.num_processes} processes")
             with multiprocessing.Pool(args.num_processes) as pool:
                 for result in pool.imap_unordered(run, param_iter):
                     # Save to a results file.
