@@ -341,7 +341,7 @@ def setup_sample_file(args, num_threads=1):
     map = args.genetic_map
     if not filename.endswith(".samples"):
         raise ValueError("Sample data file must end with '.samples'")
-    base_filename = filename[:len(".samples")]
+    base_filename = filename[:-len(".samples")]
     sd = tsinfer.load(filename)
 
     anc = tsinfer.generate_ancestors(
@@ -356,6 +356,7 @@ def setup_sample_file(args, num_threads=1):
     match = re.search(r'(chr\d+)', filename)
     if match or map is not None:
         if map is not None:
+            logger.info(f"Using {map} for the recombination map")
             chr_map = msprime.RecombinationMap.read_hapmap(map)
         else:
             chr = match.group(1)
