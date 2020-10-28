@@ -120,6 +120,7 @@ def randomly_split_polytomies(
 
         if check_mutations and prev_tree is not None:
             # This is grim. There must be a more efficient way.
+            # we can probably sort mutations by node then by time, then by time of 
             # It would also help if mutations were sorted such that all mutations
             # above the same node appeared consecutively, with oldest first.
             oldest_mutation_for_node = {}
@@ -268,7 +269,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
 
 def setup_simulation(
     ts, prefix, random_seed, err=0, num_threads=1,
-    cheat_breakpoints=False, use_site_times=False):
+    cheat_breakpoints=False, use_sites_time=False):
     """
     Take the results of a simulation and return a sample data file, some reconstructed
     ancestors, a recombination rate array, a prefix to use for files, and
@@ -280,14 +281,14 @@ def setup_simulation(
     If "cheat_recombination" is True, multiply the recombination_rate for known
     recombination locations from the simulation by 20
 
-    If "use_site_times" is True, use the times     
+    If "use_sites_time" is True, use the times     
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
-        ts, use_times=use_site_times)
+        ts, use_sites_time=use_sites_time)
     if cheat_breakpoints:
         prefix += "cheat_breakpoints"
         logger.info("Cheating by using known breakpoints")
-    if use_site_times:
+    if use_sites_time:
         prefix += "use_times"
         logger.info("Cheating by using known times")
     if err == 0:
@@ -301,7 +302,7 @@ def setup_simulation(
             err,
             random_seed=random_seed)
         sd = error_file.copy(path=prefix+".samples")
-        if use_site_times:
+        if use_sites_time:
             # Sites that were originally singletons have time 0, but could have been
             # converted to inference sites when adding error. Give these a nonzero time
             sites_time = sd.sites_time
@@ -522,7 +523,7 @@ def run_replicate(rep, args, header=True):
             err=args.error,
             num_threads=nt,
             cheat_breakpoints=args.cheat_breakpoints,
-            use_site_times=args.use_site_times,
+            use_sites_time=args.use_sites_time,
         )
     else:
         logger.debug("Using provided sample data file")
@@ -592,7 +593,7 @@ if __name__ == "__main__":
             "A list of values for the relative match_samples mismatch rate. "
             "The rate is relative to the median recombination rate between sites"
     )
-    parser.add_argument("-T", "--use_site_times", action='store_true',
+    parser.add_argument("-T", "--use_sites_time", action='store_true',
         help=
             "When using simulated data, cheat by using the times for sites (ancestors)"
             "from the simulation")
