@@ -229,14 +229,34 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
     raise NotImplementedError
 
 
-def simulate_human(random_seed=123, each_pop_n=500):
+def simulate_stdpopsim(
+    species, model, contig, mutation_file=None, random_seed=123, each_pop_n=500
+):
+    base_filename = f"data/{model}_sim_n{each_pop_n*3}"
     logger.info(
-        f"Simulating HomSap from stdpopsim: 3x{each_pop_n} samples, seed {random_seed}")
-    species = stdpopsim.get_species("HomSap")
-    contig = species.get_contig("chr20")
+        f"Simulating {species}:{contig} from stdpopsim using the {model} model: "
+        f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_filename}."
+    )
+    sample_data = None
+    species = stdpopsim.get_species(species)
+    contig = species.get_contig(contig)
+    l = contig.recombination_map.get_sequence_length()
+    if mutation_file is not None:
+        logger.debug(f"Loading {mutation_file}")
+        sample_data = tsinfer.load(mutation_file)
+        if sample_data.sequence_length != l:
+            raise ValueError(
+                f"Mismatching sequence_length between simulation and {mutation_file}")
+        # Reduce mutation rate to 0, as we will insert mutations later
+        contig = stdpopsim.Contig(
+            mutation_rate=0,
+            recombination_map=contig.recombination_map,
+            genetic_map=contig.genetic_map,
+        )
     r_map = contig.recombination_map
-    model = species.get_demographic_model('OutOfAfrica_3G09')
+    model = species.get_demographic_model(model)
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
+    # Pick samples from the first 3 pops: this is OOA specific, and needs changing
     samples = model.get_samples(each_pop_n, each_pop_n, each_pop_n)
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
@@ -244,11 +264,40 @@ def simulate_human(random_seed=123, each_pop_n=500):
         gene_conversion_rate=r_map.mean_recombination_rate * 10,
         gene_conversion_track_length=300,
         seed=random_seed)
-    l = ts.sequence_length
-    return (
-        # cut down ts for speed
-        ts.keep_intervals([[int(l * 2/20), int(l * 5/20)]]).trim(),
-        f"data/OOA_sim_n{each_pop_n*3}")
+    if sample_data is not None:
+        tables = ts.dump_tables()
+        pos = sample_data.sites_position[:]
+        logger.info(
+            f"Inserting {len(pos)} mutations at variable sites from {mutation_file}")
+        for tree in ts.trees():
+            positions = pos[np.logical_and(pos>=tree.interval[0], pos<tree.interval[1])]
+            if len(positions) == 0:
+                continue
+            muts = list(zip(
+                np.random.uniform(0, tree.total_branch_length, size=len(positions)),
+                positions))
+            muts.sort()
+            tot = 0
+            # place a mutation on a random branch, proportional to branch length
+            try:
+                for n in tree.nodes():
+                    tot += tree.branch_length(n)
+                    while muts[0][0] < tot:
+                        _, position = muts.pop(0)
+                        s = tables.sites.add_row(position=position, ancestral_state="0")
+                        tables.mutations.add_row(node=n, site=s, derived_state="1")
+            except IndexError:
+                # No more mutations - go to next tree
+                continue
+        tables.sort()
+        ts = tables.tree_sequence()
+        logger.debug(
+            f"Inserted mutations at density {ts.num_mutations/ts.sequence_length}")
+    interval = [int(l * 2/20), int(l * 5/20)]
+    logger.debug(
+        f"Cutting down tree seq to  {interval} for speed")
+    ts = ts.keep_intervals([interval]).trim()
+    return ts, base_filename
 
 def test_sim(seed):
     ts = msprime.simulate(
@@ -267,7 +316,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
     return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
-def setup_simulation(
+def setup_sampledata_from_simulation(
     ts, prefix, random_seed, err=0, num_threads=1,
     cheat_breakpoints=False, use_sites_time=False):
     """
@@ -332,12 +381,11 @@ def setup_simulation(
         rho[breakpoints] *= 20
     return sd.path, anc.path, rho, prefix, ts
 
-def setup_sample_file(args, num_threads=1):
+def setup_sample_file(filename, args, num_threads=1):
     """
     Return a Thousand Genomes Project sample data file, the ancestors file, a
     corresponding recombination rate array, a prefix to use for files, and None
     """
-    filename = args.sample_file
     map = args.genetic_map
     if not filename.endswith(".samples"):
         raise ValueError("Sample data file must end with '.samples'")
@@ -382,14 +430,14 @@ def setup_sample_file(args, num_threads=1):
 Params = collections.namedtuple(
     "Params",
     "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
-    "kc_polymax, seed, error"
+    "kc_max, seed, error, source"
 )
 
 Results = collections.namedtuple(
     "Results",
     "n, abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, "
-    "num_trees, kc_polymax, kc_poly, kc_split, arity_mean, arity_var, "
-    "seed, error, proc_time, ts_size, ts_path"
+    "num_trees, kc_max, kc_poly, kc_split, arity_mean, arity_var, "
+    "seed, error, proc_time, ts_size, ts_path, source"
 )
 
     
@@ -490,7 +538,7 @@ def run(params):
         edges=inferred_ts.num_edges,
         muts=inferred_ts.num_mutations,
         num_trees=inferred_ts.num_trees,
-        kc_polymax=params.kc_polymax,
+        kc_max=params.kc_max,
         kc_poly=kc_poly,
         kc_split=kc_split,
         arity_mean=arity_mean,
@@ -498,7 +546,9 @@ def run(params):
         seed=params.seed,
         proc_time=process_time,
         ts_size=os.path.getsize(ts_path),
-        ts_path=ts_path)
+        ts_path=ts_path,
+        source=params.source,
+    )
 
 def print_header(file):
     print("\t".join(Results._fields), file=file, flush=True)
@@ -508,34 +558,41 @@ def run_replicate(rep, args, header=True):
     """
     The main function that runs a parameter set
     """
+    nt = args.num_threads
+    err = args.error
+    source = args.source
     seed = rep+args.random_seed
-    if len(args.precision) == 0:
-        precision = [None]
-    else:
-        precision = args.precision
-    nt = 2 if args.num_threads is None else args.num_threads
-    kc_polymax = None
-    if args.sample_file is None:
-        logger.debug("Simulating human chromosome")
-        sim = simulate_human(seed)
-        sample_file, anc_file, rho, prefix, ts = setup_simulation(
+    precision = [None] if len(args.precision) == 0 else args.precision
+
+    kc_max = None
+    if source.count(":") > 1:
+        logger.debug("Simulating")
+        details = source.split(":")
+        sim = simulate_stdpopsim(
+            species=details[0],
+            contig=details[1],
+            model=details[2],
+            mutation_file=details[3] if len(details)>3 else None,
+            random_seed=seed,
+        )
+        sample_file, anc_file, rho, prefix, ts = setup_sampledata_from_simulation(
             *sim,
             random_seed=seed,
-            err=args.error,
+            err=err,
             num_threads=nt,
             cheat_breakpoints=args.cheat_breakpoints,
             use_sites_time=args.use_sites_time,
         )
     else:
         logger.debug("Using provided sample data file")
-        sample_file, anc_file, rho, prefix, ts = setup_sample_file(args, num_threads=nt)
+        sample_file, anc_file, rho, prefix, ts = setup_sample_file(source, args, nt)
     if ts is not None:
         ts.dump(prefix + ".trees")
         star_tree = tskit.Tree.generate_star(
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
-        kc_polymax = ts.simplify().kc_distance(star_tree.tree_sequence)
+        kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
     param_iter = [
-        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_polymax, seed, args.error)
+        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_max, seed, err, source)
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
@@ -572,13 +629,20 @@ if __name__ == "__main__":
         [10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 1e-3, 1e-4, 1e-5])
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("sample_file", nargs='?', default=None,
-        help="A tsinfer sample file ending in '.samples'. If given, do not"
-            "evaluate using a simulation but instead use (potentially) real"
-            "data from the specified file. If no genetic map is provided"
-            " via the -m switch, and the filename contains chrNN where"
-            "'NN' is a number, assume this is a human samples file and use the"
-            "appropriate recombination map from the thousand genomes project")
+    parser.add_argument("source", nargs='?', default="HomSap:chr20:OutOfAfrica_3G09",
+        help=
+            "A string giving the source for the data used to test mismatch rates. "
+            "If this contains at least 2 colons, it is taken as a specification for "
+            "stspopsim in the form of species:contig:model(:optional_file), where the "
+            "optional_file, if given, is a sample_data file providing the sites used as"
+            "targets for mutation. If the source contains one or no colons, it "
+            "should be a tsinfer sample file ending in '.samples', in which case "
+            "simulation is not perfomed, but instead the script uses (potentially) "
+            "real data from the specified file. If no genetic map is provided "
+            "via the -m switch, and the filename contains chrNN where "
+            "'NN' is a number, assume this is a human samples file and use the "
+            "appropriate recombination map from the thousand genomes project"
+    )
     parser.add_argument("-r", "--replicates", type=int, default=1)
     parser.add_argument("-s", "--random_seed", type=int, default=1)
     parser.add_argument("-e", "--error", type=float, default=0,
@@ -613,7 +677,7 @@ if __name__ == "__main__":
         help=
             "When using simulated data, cheat by increasing the recombination"
             "probability in regions where there is a true breakpoint")
-    parser.add_argument("-t", "--num_threads", type=int, default=None,
+    parser.add_argument("-t", "--num_threads", type=int, default=2,
         help=
             "The number of threads to use in each inference subprocess. "
             "Normally, "
