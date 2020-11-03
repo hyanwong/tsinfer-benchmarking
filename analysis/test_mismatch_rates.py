@@ -341,8 +341,9 @@ def setup_sampledata_from_simulation(
         prefix += "use_times"
         logger.info("Cheating by using known times")
     if err == 0:
-        # Save the samples file by copying
-        sd = plain_samples.copy(path=prefix + ".samples")
+        prefix += f"_seed{random_seed}"  # Add seed (was used to generate the sim)
+        sd = plain_samples.copy(path=prefix + ".samples")  # Save the samples file
+
     else:
         logger.info("Adding error")
         prefix += f"_ae{err}_seed{random_seed}"
@@ -680,7 +681,6 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--num_threads", type=int, default=2,
         help=
             "The number of threads to use in each inference subprocess. "
-            "Normally, "
     )
     parser.add_argument("-p", "--num_processes", type=int, default=40,
         help=
