@@ -10,6 +10,7 @@ import multiprocessing
 import re
 import time
 import logging
+import multiprocessing_logging
 import json
 
 import msprime
@@ -223,6 +224,7 @@ def randomly_split_polytomies(
 tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies        
 
 logging.basicConfig()
+multiprocessing_logging.install_mp_handler()
 logger = logging.getLogger(__name__)
 
 
@@ -231,13 +233,19 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
 
 
 def simulate_stdpopsim(
-    species, model, contig, each_pop_n, mutation_file=None, random_seed=123,
+    species, model, contig, each_pop_n, mutation_file=None, random_seed=123, skip_existing=False,
 ):
     base_filename = f"data/{model}_sim_n{each_pop_n*3}"
+    tree_filename = f"{base_filename}_seed{random_seed}"
     logger.info(
         f"Simulating {species}:{contig} from stdpopsim using the {model} model: "
         f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_filename}."
     )
+    if skip_existing and os.path.exists(tree_filename + ".trees"):
+        logger.warning(
+            f"Simulation file {tree_filename}.trees already exists, returning that.")
+        return base_filename, tree_filename
+
     sample_data = None
     species = stdpopsim.get_species(species)
     contig = species.get_contig(contig)
@@ -298,7 +306,8 @@ def simulate_stdpopsim(
     logger.debug(
         f"Cutting down tree seq to  {interval} for speed")
     ts = ts.keep_intervals([interval]).trim()
-    return ts, base_filename
+    ts.dump(tree_filename + ".trees")
+    return base_filename, tree_filename
 
 def test_sim(seed):
     ts = msprime.simulate(
@@ -318,11 +327,11 @@ def physical_to_genetic(recombination_map, input_physical_positions):
 
 
 def setup_sampledata_from_simulation(
-    ts, prefix, random_seed, err=0, num_threads=1,
+    prefix, random_seed, err=0, num_threads=1,
     cheat_breakpoints=False, use_sites_time=False, skip_existing=False):
     """
     Take the results of a simulation and return a sample data file, some reconstructed
-    ancestors, a recombination rate array, a prefix to use for files, and
+    ancestors, a recombination rate array, a suffix to append to the file prefix, and
     the original tree sequence.
     
     If 'err' is 0, we do not inject any errors into the haplotypes. Otherwise
@@ -337,17 +346,18 @@ def setup_sampledata_from_simulation(
     going to be generated already exist, then skip the actual simulation and just return
     those files and their data.
     """
+    suffix = ""
+    ts = tskit.load(prefix + ".trees")
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_sites_time=use_sites_time)
     if cheat_breakpoints:
-        prefix += "cheat_breakpoints"
+        suffix += "cheat_breakpoints"
         logger.info("Cheating by using known breakpoints")
     if use_sites_time:
-        prefix += "use_times"
+        suffix += "use_times"
         logger.info("Cheating by using known times")
     if err == 0:
-        prefix += f"_seed{random_seed}"  # Add seed (was used to generate the sim)
-        sd_path = prefix + ".samples"
+        sd_path = prefix + suffix + ".samples"
         if skip_existing and os.path.exists(sd_path):
             logger.warning(f"Simulation file {sd_path} already exists, loading that.")
             sd = tsinfer.load(sd_path)
@@ -356,8 +366,8 @@ def setup_sampledata_from_simulation(
             sd.finalise()
     else:
         logger.info("Adding error")
-        prefix += f"_ae{err}_seed{random_seed}"
-        sd_path = prefix + ".samples"
+        suffix += f"_ae{err}"
+        sd_path = prefix + suffix + ".samples"
         if skip_existing and os.path.exists(sd_path):
             logger.warning(f"Simulation file {sd_path} already exists, loading that.")
             sd = tsinfer.load(sd_path)
@@ -366,7 +376,7 @@ def setup_sampledata_from_simulation(
                 plain_samples,
                 err,
                 random_seed=random_seed)
-            sd = error_file.copy(path=prefix+".samples")
+            sd = error_file.copy(path=prefix + suffix + ".samples")
             if use_sites_time:
                 # Sites that were originally singletons have time 0, but could have been
                 # converted to inference sites when adding error. Give these a nonzero time
@@ -376,9 +386,11 @@ def setup_sampledata_from_simulation(
             sd.finalise()
     for attribute in ('sequence_length', 'num_samples', 'num_sites'):
         if getattr(sd, attribute) != getattr(ts, attribute):
-            raise ValueError(f"{attribute} differs between original ts and sample_data")
+            raise ValueError(
+                f"{attribute} differs between original ts and sample_data: "
+                f"{getattr(sd, attribute)} vs {getattr(ts, attribute)}")
 
-    anc_path = prefix+".ancestors"
+    anc_path = prefix + suffix + ".ancestors"
     if skip_existing and os.path.exists(anc_path):
         logger.warning(f"Ancestors file {anc_path} already exists, loading that.")
         anc = tsinfer.load(anc_path)
@@ -402,18 +414,15 @@ def setup_sampledata_from_simulation(
         # (those before the first inference position make no difference)
         breakpoints = breakpoints[breakpoints != len(rho)]
         rho[breakpoints] *= 20
-    return sd.path, anc.path, rho, prefix, ts
+    return sd.path, anc.path, rho, suffix, ts
 
-def setup_sample_file(filename, args, num_threads=1):
+def setup_sample_file(base_filename, args, num_threads=1):
     """
-    Return a Thousand Genomes Project sample data file, the ancestors file, a
+    Return a the sample data file, the ancestors file, a
     corresponding recombination rate array, a prefix to use for files, and None
     """
     map = args.genetic_map
-    if not filename.endswith(".samples"):
-        raise ValueError("Sample data file must end with '.samples'")
-    base_filename = filename[:-len(".samples")]
-    sd = tsinfer.load(filename)
+    sd = tsinfer.load(base_filename + ".samples")
 
     anc = tsinfer.generate_ancestors(
         sd,
@@ -424,7 +433,7 @@ def setup_sample_file(filename, args, num_threads=1):
 
     inference_pos = anc.sites_position[:]
 
-    match = re.search(r'(chr\d+)', filename)
+    match = re.search(r'(chr\d+)', base_filename)
     if match or map is not None:
         if map is not None:
             logger.info(f"Using {map} for the recombination map")
@@ -447,7 +456,7 @@ def setup_sample_file(filename, args, num_threads=1):
         w = np.where(d==0)
         raise ValueError("Zero recombination rates at", w, inference_pos[w])
 
-    return sd.path, anc.path, rho, filename[:-len(".samples")], None
+    return sd.path, anc.path, rho, "", None
 
 
 Params = collections.namedtuple(
@@ -502,18 +511,15 @@ def run(params):
             precision)
 
     ats_path = inf_prefix + ".atrees"
-    if params.skip_existing:
-        if os.path.exists(ats_path):
+    if params.skip_existing and os.path.exists(ats_path):
             logger.info(f"Ancestors ts file {ats_path} already exists, loading that.")
             inferred_anc_ts = tskit.load(ats_path)
             prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
             if ancestors.uuid != prov['parameters']['source']['uuid']:
                 raise RuntimeError(
                     "The loaded ancestors ts does not match the ancestors file")
-        else:
-            logger.warning(f"skip_existing specified, but no file {ats_path} exists")
-            
     else:
+        logger.info(f"MA, saving to {ats_path}")
         inferred_anc_ts = tsinfer.match_ancestors(
             samples,
             ancestors,
@@ -600,11 +606,8 @@ def run(params):
     tables.tree_sequence().dump(ts_path)  # Overwrite stored ts with the one with metadata
     return results
 
-def print_header(file):
-    print("\t".join(Results._fields), file=file, flush=True)
 
-
-def run_replicate(rep, args, header=True):
+def run_replicate(rep, args):
     """
     The main function that runs a parameter set
     """
@@ -619,16 +622,17 @@ def run_replicate(rep, args, header=True):
     if source.count(":") > 1:
         logger.debug("Simulating")
         details = source.split(":")
-        sim = simulate_stdpopsim(
+        base_name, ts_name = simulate_stdpopsim(
             species=details[0],
             contig=details[1],
             model=details[2],
             each_pop_n=args.each_pop_n,
             mutation_file=details[3] if len(details)>3 else None,
             random_seed=seed,
+            skip_existing=args.skip_existing_params,
         )
-        sample_file, anc_file, rho, prefix, ts = setup_sampledata_from_simulation(
-            *sim,
+        sample_file, anc_file, rho, suffix, ts = setup_sampledata_from_simulation(
+            ts_name,
             random_seed=seed,
             err=err,
             num_threads=nt,
@@ -636,11 +640,17 @@ def run_replicate(rep, args, header=True):
             use_sites_time=args.use_sites_time,
             skip_existing=args.skip_existing_params,
         )
+        prefix = ts_name + suffix
+        base_name += suffix
     else:
-        logger.debug("Using provided sample data file")
-        sample_file, anc_file, rho, prefix, ts = setup_sample_file(source, args, nt)
+        logger.debug("Using provided sample data file {source}")
+        if not source.endswith(".samples"):
+            raise ValueError("Sample data file must end with '.samples'")
+        prefix = source[:-len(".samples")]
+        sample_file, anc_file, rho, suffix, ts = setup_sample_file(prefix, args, nt)
+        base_name = prefix + suffix
+
     if ts is not None:
-        ts.dump(prefix + ".trees")
         star_tree = tskit.Tree.generate_star(
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
@@ -649,14 +659,15 @@ def run_replicate(rep, args, header=True):
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
+    treefiles = []
     results_filename = prefix + ".results"
     with open(results_filename, "wt") as file:
-        if header:
-            print_header(file)
+        print("\t".join(Results._fields), file=file, flush=True)
         if args.num_processes < 2:
             for p in param_iter:
                 result=run(p)
                 print("\t".join(str(r) for r in result), file=file, flush=True)
+                treefiles.append(result.ts_path)
         else:
             logger.info(
                 f"Parallelising {len(param_iter)} parameter combinations "
@@ -664,13 +675,10 @@ def run_replicate(rep, args, header=True):
             with multiprocessing.Pool(args.num_processes) as pool:
                 for result in pool.imap_unordered(run, param_iter):
                     # Save to a results file.
-                    # NB this can be pasted into R and plotted using
-                    # d <- read.table(stdin(), header=T)
-                    # d$rel_ma <- factor(d$ma_mis / d$ms_mis)
-                    # ggplot() + geom_line(data = d, aes(x = ms_mis, y = edges+muts, color = rel_ma)) + scale_x_continuous(trans='log10')
                     print("\t".join(str(r) for r in result), file=file, flush=True)
+                    treefiles.append(result.ts_path)
     logger.info(f"Results saved to {results_filename}")
-    return results_filename
+    return base_name, treefiles
 
 if __name__ == "__main__":
 
@@ -764,22 +772,18 @@ if __name__ == "__main__":
     for rep in range(args.replicates):
         # NB: this doesn't allow parallelising of replicates
         logger.debug(f"Running replicate {rep}")
-        filenames.append(run_replicate(rep, args, header=not multiple_replicates))
+        base_name, treenames = run_replicate(rep, args)
+        filenames += treenames
     if multiple_replicates:
-        # Combine the replicates files together
-        same_prefix = ""
-        for char in zip(*filenames):
-            if len(set(char)) > 1:
-                break
-            same_prefix += char[0]
-        final_filename = same_prefix + ".results"
-        if len(same_prefix) == 0 or final_filename in filenames:
-            raise ValueError(
-                f"{final_filename} invalid. Original results accessible in {filenames}")
-        with open(final_filename, "wt") as final_file:
-            print_header(final_file)
-            for result_filename in filenames:
-                with open(result_filename, "rt") as results_file:
-                    for line in results_file:
-                        final_file.write(line)
-        logger.info(f"Final results integrated into {final_filename}")
+        
+        header = None
+        with open(base_name + ".results", "wt") as final_file:
+            for ts_name in filenames:
+                metadata = json.loads(tskit.load(ts_name).metadata.decode())
+                if header is None:
+                    header = list(metadata.keys())
+                    print("\t".join(metadata.keys()), file=final_file)
+                else:
+                    assert header == list(metadata.keys())
+                print("\t".join([str(v) for v in metadata.values()]), file=final_file)
+        logger.info(f"Final results integrated into {base_name}.results")
