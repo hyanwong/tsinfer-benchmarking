@@ -10,6 +10,7 @@ import multiprocessing
 import re
 import time
 import logging
+import json
 
 import msprime
 import tskit
@@ -230,7 +231,7 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
 
 
 def simulate_stdpopsim(
-    species, model, contig, mutation_file=None, random_seed=123, each_pop_n=500
+    species, model, contig, each_pop_n, mutation_file=None, random_seed=123,
 ):
     base_filename = f"data/{model}_sim_n{each_pop_n*3}"
     logger.info(
@@ -318,7 +319,7 @@ def physical_to_genetic(recombination_map, input_physical_positions):
 
 def setup_sampledata_from_simulation(
     ts, prefix, random_seed, err=0, num_threads=1,
-    cheat_breakpoints=False, use_sites_time=False):
+    cheat_breakpoints=False, use_sites_time=False, skip_existing=False):
     """
     Take the results of a simulation and return a sample data file, some reconstructed
     ancestors, a recombination rate array, a prefix to use for files, and
@@ -330,7 +331,11 @@ def setup_sampledata_from_simulation(
     If "cheat_recombination" is True, multiply the recombination_rate for known
     recombination locations from the simulation by 20
 
-    If "use_sites_time" is True, use the times     
+    If "use_sites_time" is True, use the times
+    
+    If "skip_existing" is True, and the sample_data file and ancestors_file that were
+    going to be generated already exist, then skip the actual simulation and just return
+    those files and their data.
     """
     plain_samples = tsinfer.SampleData.from_tree_sequence(
         ts, use_sites_time=use_sites_time)
@@ -342,31 +347,48 @@ def setup_sampledata_from_simulation(
         logger.info("Cheating by using known times")
     if err == 0:
         prefix += f"_seed{random_seed}"  # Add seed (was used to generate the sim)
-        sd = plain_samples.copy(path=prefix + ".samples")  # Save the samples file
-
+        sd_path = prefix + ".samples"
+        if skip_existing and os.path.exists(sd_path):
+            logger.warning(f"Simulation file {sd_path} already exists, loading that.")
+            sd = tsinfer.load(sd_path)
+        else:
+            sd = plain_samples.copy(path=sd_path)  # Save the samples file
+            sd.finalise()
     else:
         logger.info("Adding error")
         prefix += f"_ae{err}_seed{random_seed}"
-        error_file = add_errors(
-            plain_samples,
-            err,
-            random_seed=random_seed)
-        sd = error_file.copy(path=prefix+".samples")
-        if use_sites_time:
-            # Sites that were originally singletons have time 0, but could have been
-            # converted to inference sites when adding error. Give these a nonzero time
-            sites_time = sd.sites_time
-            sites_time[sites_time == 0] = np.min(sites_time[sites_time > 0])/1000.0
-            sd.sites_time[:] = sites_time
-    sd.finalise()
+        sd_path = prefix + ".samples"
+        if skip_existing and os.path.exists(sd_path):
+            logger.warning(f"Simulation file {sd_path} already exists, loading that.")
+            sd = tsinfer.load(sd_path)
+        else:
+            error_file = add_errors(
+                plain_samples,
+                err,
+                random_seed=random_seed)
+            sd = error_file.copy(path=prefix+".samples")
+            if use_sites_time:
+                # Sites that were originally singletons have time 0, but could have been
+                # converted to inference sites when adding error. Give these a nonzero time
+                sites_time = sd.sites_time
+                sites_time[sites_time == 0] = np.min(sites_time[sites_time > 0])/1000.0
+                sd.sites_time[:] = sites_time
+            sd.finalise()
+    for attribute in ('sequence_length', 'num_samples', 'num_sites'):
+        if getattr(sd, attribute) != getattr(ts, attribute):
+            raise ValueError(f"{attribute} differs between original ts and sample_data")
 
-
-    anc = tsinfer.generate_ancestors(
-        sd,
-        num_threads=num_threads,
-        path=prefix+".ancestors",
-    )
-    logger.info("GA done")
+    anc_path = prefix+".ancestors"
+    if skip_existing and os.path.exists(anc_path):
+        logger.warning(f"Ancestors file {anc_path} already exists, loading that.")
+        anc = tsinfer.load(anc_path)
+    else:
+        anc = tsinfer.generate_ancestors(
+            sd,
+            num_threads=num_threads,
+            path=anc_path,
+        )
+        logger.info("GA done")
 
     inference_pos = anc.sites_position[:]
 
@@ -431,7 +453,7 @@ def setup_sample_file(filename, args, num_threads=1):
 Params = collections.namedtuple(
     "Params",
     "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
-    "kc_max, seed, error, source"
+    "kc_max, seed, error, source, skip_existing"
 )
 
 Results = collections.namedtuple(
@@ -471,22 +493,36 @@ def run(params):
     assert params.anc_file.endswith(".ancestors")
     samples = tsinfer.load(params.sample_file)
     ancestors = tsinfer.load(params.anc_file)
+    start_time = time.process_time()
     prefix = params.sample_file[0:-len(".samples")]
     inf_prefix = "{}_rma{}_rms{}_p{}".format(
             prefix,
             params.ma_mis_rate,
             params.ms_mis_rate,
             precision)
-    start_time = time.process_time()
-    inferred_anc_ts = tsinfer.match_ancestors(
-        samples,
-        ancestors,
-        num_threads=params.num_threads,
-        precision=precision,
-        recombination_rate=params.rec_rate,
-        mismatch_rate=ma_mis)
-    inferred_anc_ts.dump(inf_prefix + ".atrees")
-    logger.info(f"MA done: abs_ma_mis rate = {ma_mis}")
+
+    ats_path = inf_prefix + ".atrees"
+    if params.skip_existing and os.path.exists(ats_path):
+        logger.warning(f"Ancestors ts file {ats_path} already exists, loading that.")
+        inferred_anc_ts = tskit.load(ats_path)
+    else:
+        inferred_anc_ts = tsinfer.match_ancestors(
+            samples,
+            ancestors,
+            num_threads=params.num_threads,
+            precision=precision,
+            recombination_rate=params.rec_rate,
+            mismatch_rate=ma_mis)
+        inferred_anc_ts.dump(ats_path)
+        logger.info(f"MA done: abs_ma_mis rate = {ma_mis}")
+
+    ts_path = inf_prefix + ".trees"
+    if params.skip_existing and os.path.exists(ts_path):
+        logger.warning(f"Inferred ts file {ts_path} already exists, loading that.")
+        inferred_ts = tskit.load(ts_path)
+        return Results(**json.loads(inferred_ts.metadata.decode()))
+
+    # Otherwise finish off the inference
     inferred_ts = tsinfer.match_samples(
         samples,
         inferred_anc_ts,
@@ -495,8 +531,7 @@ def run(params):
         recombination_rate=params.rec_rate,
         mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
-    ts_path = inf_prefix + ".trees"
-    inferred_ts.dump(ts_path)
+    inferred_ts.dump(ts_path)  # Temporarily save the ts: we will add metadata later
     logger.info(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
@@ -513,10 +548,10 @@ def run(params):
                 nc_tot += tree.span
     arity_mean = nc_sum/nc_tot
     arity_var = nc_sum_sq / nc_tot - (arity_mean ** 2) # can't be bothered to adjust for n
-
+    
     # Calculate span of root nodes in simplified tree
     
-
+    
     # Calculate KC
     try:
         kc_poly = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
@@ -528,7 +563,7 @@ def run(params):
         logger.debug("KC split calculated")
     except FileNotFoundError:
         kc_poly = kc_split = None
-    return Results(
+    results = Results(
         n=inferred_ts.num_samples,
         abs_ma_mis=ma_mis,
         abs_ms_mis=ms_mis,
@@ -550,6 +585,12 @@ def run(params):
         ts_path=ts_path,
         source=params.source,
     )
+    # Save the results into the ts metadata - this should allow us to reconstruct the
+    # results table should anything go awry, or if we need to add more
+    tables = inferred_ts.dump_tables()
+    tables.metadata = json.dumps(results._asdict()).encode()
+    tables.tree_sequence().dump(ts_path)  # Overwrite stored ts with the one with metadata
+    return results
 
 def print_header(file):
     print("\t".join(Results._fields), file=file, flush=True)
@@ -562,6 +603,7 @@ def run_replicate(rep, args, header=True):
     nt = args.num_threads
     err = args.error
     source = args.source
+    k = args.skip_existing_params
     seed = rep+args.random_seed
     precision = [None] if len(args.precision) == 0 else args.precision
 
@@ -573,6 +615,7 @@ def run_replicate(rep, args, header=True):
             species=details[0],
             contig=details[1],
             model=details[2],
+            each_pop_n=args.each_pop_n,
             mutation_file=details[3] if len(details)>3 else None,
             random_seed=seed,
         )
@@ -583,6 +626,7 @@ def run_replicate(rep, args, header=True):
             num_threads=nt,
             cheat_breakpoints=args.cheat_breakpoints,
             use_sites_time=args.use_sites_time,
+            skip_existing=args.skip_existing_params,
         )
     else:
         logger.debug("Using provided sample data file")
@@ -593,7 +637,7 @@ def run_replicate(rep, args, header=True):
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
     param_iter = [
-        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_max, seed, err, source)
+        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_max, seed, err, source, k)
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
@@ -606,7 +650,7 @@ def run_replicate(rep, args, header=True):
                 result=run(p)
                 print("\t".join(str(r) for r in result), file=file, flush=True)
         else:
-            logging.info(
+            logger.info(
                 f"Parallelising {len(param_iter)} parameter combinations "
                 f"over {args.num_processes} processes")
             with multiprocessing.Pool(args.num_processes) as pool:
@@ -625,9 +669,9 @@ if __name__ == "__main__":
 
     # Set up the range of params for multiprocessing
     default_relative_match_samples_mismatch = np.array(
-        [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4, 1e-5])
+        [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 1e-4, 1e-5])
     default_relative_match_ancestors_mismatch = np.array(
-        [10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 1e-3, 1e-4, 1e-5])
+        [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 1e-4, 1e-5])
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", nargs='?', default="HomSap:chr20:OutOfAfrica_3G09",
@@ -643,6 +687,9 @@ if __name__ == "__main__":
             "via the -m switch, and the filename contains chrNN where "
             "'NN' is a number, assume this is a human samples file and use the "
             "appropriate recombination map from the thousand genomes project"
+    )
+    parser.add_argument("-N", "--each_pop_n", type=int, default=500,
+        help="The number of samples in each stdpopsim population. Should be even."
     )
     parser.add_argument("-r", "--replicates", type=int, default=1)
     parser.add_argument("-s", "--random_seed", type=int, default=1)
@@ -678,6 +725,9 @@ if __name__ == "__main__":
         help=
             "When using simulated data, cheat by increasing the recombination"
             "probability in regions where there is a true breakpoint")
+    parser.add_argument("-k", "--skip_existing_params", action='store_true',
+        help=
+            "If inference files exists with the same name, assume they skip the inference ")
     parser.add_argument("-t", "--num_threads", type=int, default=2,
         help=
             "The number of threads to use in each inference subprocess. "
@@ -707,7 +757,6 @@ if __name__ == "__main__":
         # NB: this doesn't allow parallelising of replicates
         logger.debug(f"Running replicate {rep}")
         filenames.append(run_replicate(rep, args, header=not multiple_replicates))
-        print(filenames)
     if multiple_replicates:
         # Combine the replicates files together
         same_prefix = ""
