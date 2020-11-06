@@ -502,9 +502,17 @@ def run(params):
             precision)
 
     ats_path = inf_prefix + ".atrees"
-    if params.skip_existing and os.path.exists(ats_path):
-        logger.warning(f"Ancestors ts file {ats_path} already exists, loading that.")
-        inferred_anc_ts = tskit.load(ats_path)
+    if params.skip_existing:
+        if os.path.exists(ats_path):
+            logger.info(f"Ancestors ts file {ats_path} already exists, loading that.")
+            inferred_anc_ts = tskit.load(ats_path)
+            prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
+            if ancestors.uuid != prov['parameters']['source']['uuid']:
+                raise RuntimeError(
+                    "The loaded ancestors ts does not match the ancestors file")
+        else:
+            logger.warning(f"skip_existing specified, but no file {ats_path} exists")
+            
     else:
         inferred_anc_ts = tsinfer.match_ancestors(
             samples,
