@@ -504,7 +504,7 @@ def run(params):
     ancestors = tsinfer.load(params.anc_file)
     start_time = time.process_time()
     prefix = params.sample_file[0:-len(".samples")]
-    inf_prefix = "{}_rma{}_rms{}_p{}".format(
+    inf_prefix = "{}_rma{:g}_rms{:g}_p{}".format(
             prefix,
             params.ma_mis_rate,
             params.ms_mis_rate,
@@ -512,12 +512,12 @@ def run(params):
 
     ats_path = inf_prefix + ".atrees"
     if params.skip_existing and os.path.exists(ats_path):
-            logger.info(f"Ancestors ts file {ats_path} already exists, loading that.")
-            inferred_anc_ts = tskit.load(ats_path)
-            prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
-            if ancestors.uuid != prov['parameters']['source']['uuid']:
-                raise RuntimeError(
-                    "The loaded ancestors ts does not match the ancestors file")
+        logger.info(f"Ancestors ts file {ats_path} already exists, loading that.")
+        inferred_anc_ts = tskit.load(ats_path)
+        prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
+        if ancestors.uuid != prov['parameters']['source']['uuid']:
+            raise RuntimeError(
+                "The loaded ancestors ts does not match the ancestors file")
     else:
         logger.info(f"MA, saving to {ats_path}")
         inferred_anc_ts = tsinfer.match_ancestors(
@@ -651,6 +651,7 @@ def run_replicate(rep, args):
         base_name = prefix + suffix
 
     if ts is not None:
+        logger.info("Calculating the kc distance of the simulation with a flat tree")
         star_tree = tskit.Tree.generate_star(
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
