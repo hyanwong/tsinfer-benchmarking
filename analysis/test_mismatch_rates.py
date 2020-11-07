@@ -688,7 +688,7 @@ def run_replicate(rep, args):
                             logging.warning("Some differences in headers")
                     result_str = [str(result.get(h, "")) for h in headers]
                     print("\t".join(result_str), file=file, flush=True)
-                    treefiles.append(result.ts_path)
+                    treefiles.append(result['ts_path'])
     logger.info(f"Results saved to {results_filename}")
     return base_name, treefiles
 
