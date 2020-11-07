@@ -465,13 +465,6 @@ Params = collections.namedtuple(
     "kc_max, seed, error, source, skip_existing"
 )
 
-Results = collections.namedtuple(
-    "Results",
-    "n, abs_ma_mis, abs_ms_mis, rel_ma_mis, rel_ms_mis, precision, edges, muts, "
-    "num_trees, kc_max, kc_poly, kc_split, arity_mean, arity_var, "
-    "seed, error, proc_time, ts_size, ts_path, source"
-)
-
     
 def run(params):
     """
@@ -534,7 +527,13 @@ def run(params):
     if params.skip_existing and os.path.exists(ts_path):
         logger.warning(f"Inferred ts file {ts_path} already exists, loading that.")
         inferred_ts = tskit.load(ts_path)
-        return Results(**json.loads(inferred_ts.metadata.decode()))
+        if len(inferred_ts.metadata) == 0:
+            logging.warning(f"No metadata in {ts_path}")
+        loaded_params = json.loads(inferred_ts.metadata.decode())
+        if 'kc_max' in loaded_params:  # Double check we are OK
+            assert np.allclose(params.kc_max, loaded_params['kc_max'])
+
+        return loaded_params
 
     # Otherwise finish off the inference
     inferred_ts = tsinfer.match_samples(
@@ -577,32 +576,32 @@ def run(params):
         logger.debug("KC split calculated")
     except FileNotFoundError:
         kc_poly = kc_split = None
-    results = Results(
-        n=inferred_ts.num_samples,
-        abs_ma_mis=ma_mis,
-        abs_ms_mis=ms_mis,
-        rel_ma_mis=params.ma_mis_rate,
-        rel_ms_mis=params.ms_mis_rate,
-        error=params.error,
-        precision=precision,
-        edges=inferred_ts.num_edges,
-        muts=inferred_ts.num_mutations,
-        num_trees=inferred_ts.num_trees,
-        kc_max=params.kc_max,
-        kc_poly=kc_poly,
-        kc_split=kc_split,
-        arity_mean=arity_mean,
-        arity_var=arity_var,
-        seed=params.seed,
-        proc_time=process_time,
-        ts_size=os.path.getsize(ts_path),
-        ts_path=ts_path,
-        source=params.source,
-    )
+    results = {
+        'n': inferred_ts.num_samples,
+        'abs_ma_mis': ma_mis,
+        'abs_ms_mis': ms_mis,
+        'rel_ma_mis': params.ma_mis_rate,
+        'rel_ms_mis': params.ms_mis_rate,
+        'error': params.error,
+        'precision': precision,
+        'edges': inferred_ts.num_edges,
+        'muts': inferred_ts.num_mutations,
+        'num_trees': inferred_ts.num_trees,
+        'kc_max': params.kc_max,
+        'kc_poly': kc_poly,
+        'kc_split': kc_split,
+        'arity_mean': arity_mean,
+        'arity_var': arity_var,
+        'seed': params.seed,
+        'proc_time': process_time,
+        'ts_size': os.path.getsize(ts_path),
+        'ts_path': ts_path,
+        'source': params.source,
+    }
     # Save the results into the ts metadata - this should allow us to reconstruct the
     # results table should anything go awry, or if we need to add more
     tables = inferred_ts.dump_tables()
-    tables.metadata = json.dumps(results._asdict()).encode()
+    tables.metadata = json.dumps(results).encode()
     tables.tree_sequence().dump(ts_path)  # Overwrite stored ts with the one with metadata
     return results
 
@@ -651,7 +650,7 @@ def run_replicate(rep, args):
         base_name = prefix + suffix
 
     if ts is not None:
-        logger.info("Calculating the kc distance of the simulation with a flat tree")
+        logger.info("Calculating the kc distance of the simulation against a flat tree")
         star_tree = tskit.Tree.generate_star(
             ts.num_samples, span=ts.sequence_length, record_provenance=False)
         kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
@@ -663,12 +662,18 @@ def run_replicate(rep, args):
     treefiles = []
     results_filename = prefix + ".results"
     with open(results_filename, "wt") as file:
-        print("\t".join(Results._fields), file=file, flush=True)
+        headers = []
         if args.num_processes < 2:
             for p in param_iter:
-                result=run(p)
-                print("\t".join(str(r) for r in result), file=file, flush=True)
-                treefiles.append(result.ts_path)
+                result = run(p)
+                if len(headers) == 0:
+                    headers = list(result.keys())
+                else:
+                    if set(headers) != set(result.keys()):
+                        logging.warning("Some differences in headers")
+                result_str = [str(result.get(h, "")) for h in headers]
+                print("\t".join(result_str), file=file, flush=True)
+                treefiles.append(result['ts_path'])
         else:
             logger.info(
                 f"Parallelising {len(param_iter)} parameter combinations "
@@ -676,7 +681,13 @@ def run_replicate(rep, args):
             with multiprocessing.Pool(args.num_processes) as pool:
                 for result in pool.imap_unordered(run, param_iter):
                     # Save to a results file.
-                    print("\t".join(str(r) for r in result), file=file, flush=True)
+                    if len(headers) == 0:
+                        headers = list(result.keys())
+                    else:
+                        if set(headers) != set(result.keys()):
+                            logging.warning("Some differences in headers")
+                    result_str = [str(result.get(h, "")) for h in headers]
+                    print("\t".join(result_str), file=file, flush=True)
                     treefiles.append(result.ts_path)
     logger.info(f"Results saved to {results_filename}")
     return base_name, treefiles
@@ -785,6 +796,8 @@ if __name__ == "__main__":
                     header = list(metadata.keys())
                     print("\t".join(metadata.keys()), file=final_file)
                 else:
-                    assert header == list(metadata.keys())
+                    if header != list(metadata.keys()):
+                        raise ValueError(
+                            f"Header '{header}' differs from {list(metadata.keys())}")
                 print("\t".join([str(v) for v in metadata.values()]), file=final_file)
         logger.info(f"Final results integrated into {base_name}.results")
