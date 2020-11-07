@@ -668,6 +668,7 @@ def run_replicate(rep, args):
                 result = run(p)
                 if len(headers) == 0:
                     headers = list(result.keys())
+                    print("\t".join(headers), file=file)
                 else:
                     if set(headers) != set(result.keys()):
                         logging.warning("Some differences in headers")
@@ -683,6 +684,7 @@ def run_replicate(rep, args):
                     # Save to a results file.
                     if len(headers) == 0:
                         headers = list(result.keys())
+                        print("\t".join(headers), file=file)
                     else:
                         if set(headers) != set(result.keys()):
                             logging.warning("Some differences in headers")
