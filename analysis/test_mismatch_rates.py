@@ -525,15 +525,18 @@ def run(params):
 
     ts_path = inf_prefix + ".trees"
     if params.skip_existing and os.path.exists(ts_path):
-        logger.warning(f"Inferred ts file {ts_path} already exists, loading that.")
+        logger.info(f"Inferred ts file {ts_path} already exists, loading that.")
         inferred_ts = tskit.load(ts_path)
-        if len(inferred_ts.metadata) == 0:
-            logging.warning(f"No metadata in {ts_path}")
-        loaded_params = json.loads(inferred_ts.metadata.decode())
-        if 'kc_max' in loaded_params:  # Double check we are OK
-            assert np.allclose(params.kc_max, loaded_params['kc_max'])
-
-        return loaded_params
+        metadata = inferred_ts.metadata.decode()
+        if len(metadata) > 0:
+            loaded_params = json.loads()
+            try:
+                assert np.allclose(params.kc_max, loaded_params['kc_max'])
+            except (KeyError, TypeError):
+                pass  # could be NaN e.g. if this is real data
+            return loaded_params
+        else:
+            logging.warning("No metadata in {ts_path}: re-inferring these parameters")
 
     # Otherwise finish off the inference
     inferred_ts = tsinfer.match_samples(
@@ -642,7 +645,7 @@ def run_replicate(rep, args):
         prefix = ts_name + suffix
         base_name += suffix
     else:
-        logger.debug("Using provided sample data file {source}")
+        logger.debug(f"Using provided sample data file {source}")
         if not source.endswith(".samples"):
             raise ValueError("Sample data file must end with '.samples'")
         prefix = source[:-len(".samples")]
