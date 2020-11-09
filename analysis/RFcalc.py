@@ -1,12 +1,13 @@
 """
 Use Dendropy to calculate the unweighted (i.e. topology only) Robinson Fould distance
-between 2 tree sequences. Can be run in parallel along the lines of:
+between 2 tree sequences. This can be very slow. It can be run in parallel along the
+lines of:
 
 for f in data/mysim.*_rma*.trees; do python3 RFcalc.py data/mysim.trees $f -s 123 -v -o 100 & done
 
 and RF distances can be extracted using something like
 
-for f in data/mysim.*_rma*.trees.*RFdist; do echo -n $f | cat - $f | sed -r 's/.*rma(.*)_rms(.*)_p.*RFdist(.*)/\1\t\2\t\3/' ; done
+for f in data/mysim.*_rma*.trees.*RF; do echo -n $f | cat - $f | sed -r 's/.*rma(.*)_rms(.*)_p.*RF(.*)/\1\t\2\t\3/' ; done
 
 
 """
@@ -291,7 +292,7 @@ def randomly_split_polytomies(
 
 tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies
 
-def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1):
+def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=False):
     if random_seed is not None:
         orig_ts = tskit.load(original_ts).simplify().randomly_split_polytomies(
             random_seed=random_seed)
@@ -310,10 +311,14 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1):
     else:
         suffix = ".split." + metric
 
-
+    filename = inferred_ts + suffix
+    if keep and os.path.exists(filename):
+        logging.warning(
+            "'--keep_existing' specified & file '{filename}' already exists. Aborting.")
+        return
     if metric == "KC":
         kc = orig_ts.kc_distance(cmp_ts)
-        with open(inferred_ts + suffix, "wt") as stat:
+        with open(filename, "wt") as stat:
             print(kc, file=stat)
         logging.info(f"Saved data for '{inferred_ts}': KCdist = {kc}")
 
@@ -349,7 +354,7 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1):
                         )
                     )
                     # save temporarily, so we can get stats even if not completed
-                    with open(inferred_ts + suffix, "wt") as stat:
+                    with open(filename, "wt") as stat:
                         print(rf_stat/pos, file=stat)
             if pos >= end2:
                 t2 = next(t_iter2)
@@ -372,7 +377,7 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1):
                 orig_tree, cmp_tree) * span
             pos = min(end1, end2)
     
-        with open(inferred_ts + suffix, "wt") as stat:
+        with open(filename, "wt") as stat:
             print(rf_stat / seq_length, file=stat)
 
         logging.info(f"Saved data for '{inferred_ts}': RFdist = {rf_stat / seq_length}")
@@ -407,8 +412,11 @@ if __name__ == "__main__":
             "if verbosity is >= 2."
             )
     )
+    parser.add_argument("-k", "--keep_existing", action='store_true',
+        help=
+            "If the file already exists, skip the calc ")
     parser.add_argument('--metric', '-m', choices=["KC", "RF"], default="RF", 
-        help='verbosity: output extra non-essential info')
+        help='which metric to calculate')
     parser.add_argument('--verbosity', '-v', action="count", default=0, 
         help='verbosity: output extra non-essential info')
     
@@ -420,4 +428,11 @@ if __name__ == "__main__":
     elif args.verbosity>=2:
         logging.basicConfig(level=logging.DEBUG)
 
-    main(args.orig_ts, args.cmp_ts, args.metric, args.random_seed, args.output_tot)
+    main(
+        args.orig_ts,
+        args.cmp_ts,
+        args.metric,
+        args.random_seed,
+        args.output_tot,
+        args.keep_existing,
+    )
