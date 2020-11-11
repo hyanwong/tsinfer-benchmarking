@@ -509,10 +509,17 @@ def run(params):
         inferred_anc_ts = tskit.load(ats_path)
         prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
         if ancestors.uuid != prov['parameters']['source']['uuid']:
-            raise RuntimeError(
+            logger.warning(
                 "The loaded ancestors ts does not match the ancestors file")
+            # We might be re-running this, but the simulation file is the same
+            # So double-check that the positions in the ats are a subset of those in the
+            # used sample data file
+            assert np.all(np.isin(
+                inferred_anc_ts.tables.sites.position,
+                samples.sites_position[:]))
+            
     else:
-        logger.info(f"MA, saving to {ats_path}")
+        logger.info(f"MA running: will save to {ats_path}")
         inferred_anc_ts = tsinfer.match_ancestors(
             samples,
             ancestors,
@@ -529,7 +536,7 @@ def run(params):
         inferred_ts = tskit.load(ts_path)
         metadata = inferred_ts.metadata.decode()
         if len(metadata) > 0:
-            loaded_params = json.loads()
+            loaded_params = json.loads(metadata)
             try:
                 assert np.allclose(params.kc_max, loaded_params['kc_max'])
             except (KeyError, TypeError):
@@ -539,6 +546,7 @@ def run(params):
             logging.warning("No metadata in {ts_path}: re-inferring these parameters")
 
     # Otherwise finish off the inference
+    logger.info(f"MS running: will save to {ts_path}")
     inferred_ts = tsinfer.match_samples(
         samples,
         inferred_anc_ts,
@@ -663,7 +671,7 @@ def run_replicate(rep, args):
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
     treefiles = []
-    results_filename = prefix + ".results"
+    results_filename = prefix + "_results.csv"
     with open(results_filename, "wt") as file:
         headers = []
         if args.num_processes < 2:
@@ -671,12 +679,12 @@ def run_replicate(rep, args):
                 result = run(p)
                 if len(headers) == 0:
                     headers = list(result.keys())
-                    print("\t".join(headers), file=file)
+                    print(",".join(headers), file=file)
                 else:
                     if set(headers) != set(result.keys()):
                         logging.warning("Some differences in headers")
                 result_str = [str(result.get(h, "")) for h in headers]
-                print("\t".join(result_str), file=file, flush=True)
+                print(",".join(result_str), file=file, flush=True)
                 treefiles.append(result['ts_path'])
         else:
             logger.info(
@@ -687,12 +695,12 @@ def run_replicate(rep, args):
                     # Save to a results file.
                     if len(headers) == 0:
                         headers = list(result.keys())
-                        print("\t".join(headers), file=file)
+                        print(",".join(headers), file=file)
                     else:
                         if set(headers) != set(result.keys()):
                             logging.warning("Some differences in headers")
                     result_str = [str(result.get(h, "")) for h in headers]
-                    print("\t".join(result_str), file=file, flush=True)
+                    print(",".join(result_str), file=file, flush=True)
                     treefiles.append(result['ts_path'])
     logger.info(f"Results saved to {results_filename}")
     return base_name, treefiles
@@ -794,15 +802,15 @@ if __name__ == "__main__":
     if multiple_replicates:
         
         header = None
-        with open(base_name + ".results", "wt") as final_file:
+        with open(base_name + "_results.csv", "wt") as final_file:
             for ts_name in filenames:
                 metadata = json.loads(tskit.load(ts_name).metadata.decode())
                 if header is None:
                     header = list(metadata.keys())
-                    print("\t".join(metadata.keys()), file=final_file)
+                    print(",".join(metadata.keys()), file=final_file)
                 else:
                     if header != list(metadata.keys()):
                         raise ValueError(
                             f"Header '{header}' differs from {list(metadata.keys())}")
-                print("\t".join([str(v) for v in metadata.values()]), file=final_file)
-        logger.info(f"Final results integrated into {base_name}.results")
+                print(",".join([str(v) for v in metadata.values()]), file=final_file)
+        logger.info(f"Final results integrated into {base_name}_results.csv")
