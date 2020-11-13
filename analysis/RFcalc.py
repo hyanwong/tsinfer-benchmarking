@@ -133,7 +133,7 @@ def randomly_split_polytomies(
             oldest_mutation_for_node = {}
             for site in prev_tree.sites():
                 for mutation in site.mutations:
-                    if not util.is_unknown_time(mutation.time):
+                    if not tskit.is_unknown_time(mutation.time):
                         oldest_mutation_for_node[mutation.node] = max(
                             oldest_mutation_for_node[mutation.node], mutation.time
                         )
@@ -336,7 +336,7 @@ def branches_l1(bl1, bl2):
     """
     L1 distance (weighted Robinson-Foulds).
     """
-    return branches_pnorm(bl1, bl2, 1)
+    return branches_pnorm(bl1, bl2, 0)
 
 
 def branches_l2(bl1, bl2):
@@ -466,7 +466,7 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=Fal
 
     elif metric == "RFts":
         logging.info(f"Running ts-specific RF code")
-        rf_stat = rf_distance(orig_ts, cmp_ts, branches_l2)
+        rf_stat = rf_distance(orig_ts, cmp_ts, branches_l1)
         with open(filename, "wt") as stat:
             print(rf_stat, file=stat)
         logging.info(f"Saved data for '{inferred_ts}': RFdist = {rf_stat}")
