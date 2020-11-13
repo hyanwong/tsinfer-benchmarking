@@ -123,17 +123,19 @@ def randomly_split_polytomies(
             if edge.parent != tskit.NULL:
                 nodes_changed.add(edge.parent)
 
+        oldest_mutation_for_node = {}
         if check_mutations and prev_tree is not None:
              # It would also help if mutations were sorted such that all mutations
             # above the same node appeared consecutively, with oldest first.
-            oldest_mutation_for_node = {}
             for site in prev_tree.sites():
                 for mutation in site.mutations:
                     if not tskit.is_unknown_time(mutation.time):
-                        oldest_mutation_for_node[mutation.node] = max(
-                            oldest_mutation_for_node[mutation.node], mutation.time
-                        )
-
+                        if mutation.node in oldest_mutation_for_node:
+                            oldest_mutation_for_node[mutation.node] = max(
+                                oldest_mutation_for_node[mutation.node], mutation.time
+                            )
+                        else:
+                            oldest_mutation_for_node[mutation.node] = mutation.time
         for parent_node in nodes_changed:
             child_edge_ids = edges_from_node[parent_node]
             if len(child_edge_ids) >= 3:
