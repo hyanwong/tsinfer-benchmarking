@@ -233,10 +233,12 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
 
 def rnd_kc(params):
     ts, random_seed = params
-    r_ts = tskit.Tree.generate_star(
-        ts.num_samples, span=ts.sequence_length).tree_sequence.randomly_split_polytomies(
-            random_seed=random_seed)
-    return ts.kc_distance(r_ts)
+    s = tskit.Tree.generate_star(ts.num_samples, span=ts.sequence_length).tree_sequence
+    kc = 0
+    for tree in ts.trees(sample_lists = True):
+        kc += tree.span * tree.kc_distance(s.randomly_split_polytomies(
+            random_seed=random_seed + tree.index).first(sample_lists = True)) 
+    return kc / ts.sequence_length
 
 def simulate_stdpopsim(
     species,
@@ -255,7 +257,7 @@ def simulate_stdpopsim(
         f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_fn}."
     )
     if skip_existing and os.path.exists(tree_fn + ".trees"):
-        logger.warning(
+        logger.info(
             f"Simulation file {tree_fn}.trees already exists, returning that.")
         return base_fn, tree_fn
 
@@ -328,15 +330,16 @@ def simulate_stdpopsim(
             ts.num_samples, span=tables.sequence_length, record_provenance=False)
     user_data['kc_max'] = tables.tree_sequence().kc_distance(star_tree.tree_sequence)
     kc_array = []
-    max_repeats = 1000  # This can take a long time!
+    max_reps = 100
+    ts = tables.tree_sequence()
     logger.info(
-        "Calculating the kc distance of the simulation against "
-        f"at most {max_repeats} random trees. This can take a long time."
+        f"Calculating KC distance of the sim against at most {max_reps} * {ts.num_trees}"
+        f" random trees using {num_procs} parallel threads. This could take a while."
     )
     seeds = range(random_seed, random_seed + 1000)
     with multiprocessing.Pool(num_procs) as pool:
         for i, kc in enumerate(pool.imap_unordered(
-            rnd_kc, zip(itertools.repeat(tables.tree_sequence()), seeds))
+            rnd_kc, zip(itertools.repeat(ts), seeds))
         ):
             kc_array.append(kc)
             if i > 10:
@@ -407,7 +410,7 @@ def setup_sampledata_from_simulation(
     if err == 0:
         sd_path = prefix + suffix + ".samples"
         if skip_existing and os.path.exists(sd_path):
-            logger.warning(f"Simulation file {sd_path} already exists, loading that.")
+            logger.info(f"Simulation file {sd_path} already exists, loading that.")
             sd = tsinfer.load(sd_path)
         else:
             sd = plain_samples.copy(path=sd_path)  # Save the samples file
@@ -417,7 +420,7 @@ def setup_sampledata_from_simulation(
         suffix += f"_ae{err}"
         sd_path = prefix + suffix + ".samples"
         if skip_existing and os.path.exists(sd_path):
-            logger.warning(f"Simulation file {sd_path} already exists, loading that.")
+            logger.info(f"Simulation file {sd_path} already exists, loading that.")
             sd = tsinfer.load(sd_path)
         else:
             error_file = add_errors(
@@ -440,7 +443,7 @@ def setup_sampledata_from_simulation(
 
     anc_path = prefix + suffix + ".ancestors"
     if skip_existing and os.path.exists(anc_path):
-        logger.warning(f"Ancestors file {anc_path} already exists, loading that.")
+        logger.info(f"Ancestors file {anc_path} already exists, loading that.")
         anc = tsinfer.load(anc_path)
     else:
         anc = tsinfer.generate_ancestors(
@@ -506,7 +509,7 @@ def setup_sample_file(base_filename, args, num_threads=1):
 
     return sd.path, anc.path, rho, "", None
 
-
+# Parameters passed to each subprocess
 Params = collections.namedtuple(
     "Params",
     "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
@@ -603,7 +606,6 @@ def run(params):
         recombination_rate=params.rec_rate,
         mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
-    inferred_ts.dump(ts_path)  # Temporarily save the ts: we will add metadata later
     logger.info(f"MS done: abs_ms_mis rate = {ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
@@ -627,6 +629,9 @@ def run(params):
     # Calculate KC
     try:
         simulated_ts = tskit.load(prefix+".trees")
+        sim_ts_size = simulated_ts.nbytes
+        sim_ts_min_size = simulated_ts.simplify(
+            keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
         kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
         logger.debug("KC poly calculated")
         polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
@@ -635,7 +640,9 @@ def run(params):
         kc_split = polytomies_split_ts.kc_distance(simulated_ts)
         logger.debug("KC split calculated")
     except FileNotFoundError:
+        sim_ts_size = sim_ts_min_size = None
         kc_poly = kc_split = None
+    
     results = {
         'n': inferred_ts.num_samples,
         'abs_ma_mis': ma_mis,
@@ -656,7 +663,9 @@ def run(params):
         'arity_var': arity_var,
         'seed': params.seed,
         'proc_time': process_time,
-        'ts_size': os.path.getsize(ts_path),
+        'sim_ts_size': sim_ts_size,
+        'sim_ts_min_size': sim_ts_min_size,
+        'ts_size': inferred_ts.nbytes,
         'ts_path': ts_path,
         'source': params.source,
     }
@@ -669,7 +678,7 @@ def run(params):
         tables.metadata_schema = tskit.MetadataSchema({"codec":"json"})
         tables.metadata = {}
     tables.metadata = {"user_data": results, **tables.metadata}
-    tables.tree_sequence().dump(ts_path)  # Overwrite orig ts with the one with metadata
+    tables.tree_sequence().dump(ts_path)
     return results
 
 
