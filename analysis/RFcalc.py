@@ -21,6 +21,7 @@ import logging
 import argparse
 import itertools
 import time
+import multiprocessing
 
 import tskit
 from tskit import provenance
@@ -330,11 +331,18 @@ def branches_pnorm(bl1, bl2, p):
     return np.linalg.norm(v, ord=p)
 
 
+def branches_l0(bl1, bl2):
+    """
+    L1 distance (uinweighted Robinson-Foulds).
+    """
+    return branches_pnorm(bl1, bl2, 0)
+
+
 def branches_l1(bl1, bl2):
     """
     L1 distance (weighted Robinson-Foulds).
     """
-    return branches_pnorm(bl1, bl2, 0)
+    return branches_pnorm(bl1, bl2, 1)
 
 
 def branches_l2(bl1, bl2):
@@ -432,7 +440,8 @@ def rf_distance(ts1, ts2, dist_func):
 
 
 
-def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=False):
+def run(params):
+    original_ts, inferred_ts, metric, random_seed, output_tot, keep = params
     if random_seed is not None:
         orig_ts = tskit.load(original_ts).simplify().randomly_split_polytomies(
             random_seed=random_seed)
@@ -455,24 +464,19 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=Fal
     if keep and os.path.exists(filename):
         logging.warning(
             "'--keep_existing' specified & file '{filename}' already exists. Aborting.")
-        return
+        filename = None
+
     if metric == "KC":
-        kc = orig_ts.kc_distance(cmp_ts)
-        with open(filename, "wt") as stat:
-            print(kc, file=stat)
-        logging.info(f"Saved data for '{inferred_ts}': KCdist = {kc}")
+        stat = orig_ts.kc_distance(cmp_ts)
 
     elif metric == "RFts":
         logging.info(f"Running ts-specific RF code")
-        rf_stat = rf_distance(orig_ts, cmp_ts, branches_l1)
-        with open(filename, "wt") as stat:
-            print(rf_stat, file=stat)
-        logging.info(f"Saved data for '{inferred_ts}': RFdist = {rf_stat}")
+        stat = rf_distance(orig_ts, cmp_ts, branches_l0)
 
     elif metric == "RF":
         t_iter1 = orig_ts.trees()
         t_iter2 = cmp_ts.trees()
-        rf_stat = 0
+        stat = 0
         pos = 0
         end1 = 0
         end2 = 0
@@ -520,33 +524,53 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=Fal
                 rooting="force-rooted",
                 taxon_namespace=taxon_namespace,
             )
-            rf_stat += dendropy.calculate.treecompare.symmetric_difference(
+            stat += dendropy.calculate.treecompare.symmetric_difference(
                 orig_tree, cmp_tree) * span
             pos = min(end1, end2)
-    
-        with open(filename, "wt") as stat:
-            print(rf_stat / seq_length, file=stat)
-
-        logging.info(f"Saved data for '{inferred_ts}': RFdist = {rf_stat / seq_length}")
+        stat /= seq_length
 
     else:
         raise ValueError(f"Bad metric specified: {metric}")
-    
+
+    return filename, stat        
+
+
+def main(args):
+    with multiprocessing.Pool(args.num_processes) as pool:
+        for filename, stat in pool.imap_unordered(run, zip(
+            itertools.repeat(args.orig_ts),
+            args.cmp_ts,
+            itertools.repeat(args.metric),
+            itertools.repeat(args.random_seed),
+            itertools.repeat(args.output_tot),
+            itertools.repeat(args.keep_existing),
+        )):
+            if filename is not None:
+                with open(filename, "wt") as file:
+                    print(stat, file=file)
+                logging.info(f"Saved data into '{filename}': {args.metric} = {stat}")
+            
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='Calculate the rooted Robinson Foulds distance between 2 tree seqs')
     parser.add_argument('orig_ts')
     parser.add_argument(
-        'cmp_ts',
+        'cmp_ts', nargs="+",
         help=(
-            "the ts to compare against the original."
-            " The stat will be saved under this name with a suffix '.RFdist'"))
+            "the list of tree sequence files to compare against the original."
+            " The stat will be saved under each name with a suffix '.RFdist'"))
     parser.add_argument(
         '--random_seed',
         '-s',
         type=int,
         default=None,
         help="If given, randomly split polytomies before calculating the RF dist",
+    )
+    parser.add_argument("-p", "--num_processes", type=int, default=40,
+        help=
+            "The number of processors that can be pooled to parallelise over files"
     )
     parser.add_argument(
         '--output_tot',
@@ -575,11 +599,4 @@ if __name__ == "__main__":
     elif args.verbosity>=2:
         logging.basicConfig(level=logging.DEBUG)
 
-    main(
-        args.orig_ts,
-        args.cmp_ts,
-        args.metric,
-        args.random_seed,
-        args.output_tot,
-        args.keep_existing,
-    )
+    main(args)
