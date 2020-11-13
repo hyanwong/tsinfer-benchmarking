@@ -292,6 +292,148 @@ def randomly_split_polytomies(
 
 tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies
 
+
+
+def node_encodings(ts):
+    """
+    Associate a binary-vector identifier to each node according to
+    the identities of the leaves descended from the node.
+    """
+    # XXX: assumes samples == leaves
+    n = ts.num_samples
+    W = np.eye(n)
+    f = lambda x: x
+    return ts.general_stat(
+        W,
+        f,
+        output_dim=n,
+        mode="node",
+        windows="trees",
+        strict=False,
+        polarised=True,
+        span_normalise=True,
+    ).astype(np.int8)
+
+
+def branches_pnorm(bl1, bl2, p):
+    """
+    Robinson-Foulds family of L^p distances.
+    """
+    clades1 = bl1.keys()
+    clades2 = bl2.keys()
+    v = np.fromiter(
+        itertools.chain(
+            (bl1[cl] for cl in clades1 - clades2),
+            (bl2[cl] for cl in clades2 - clades1),
+            (bl1[cl] - bl2[cl] for cl in clades1 & clades2),
+        ),
+        dtype=float,
+    )
+    return np.linalg.norm(v, ord=p)
+
+
+def branches_l1(bl1, bl2):
+    """
+    L1 distance (weighted Robinson-Foulds).
+    """
+    return branches_pnorm(bl1, bl2, 1)
+
+
+def branches_l2(bl1, bl2):
+    """
+    L2 (Euclidean) distance.
+    This is the shortest path between two points in an embedding of
+    BHV treespace into Euclidean space.  Note that this path is
+    frequently outside BHV treespace.
+    Amenta et al. (2007) lower bound on BHV treespace geodesic.
+    http://doi.org/10.1016/j.ipl.2007.02.008
+    See also the "Branch Score" or BLD (Branch Length Distance),
+    Kuhner & Felsenstein (1994).
+    http://doi.org/10.1093/oxfordjournals.molbev.a040126
+    """
+    return branches_pnorm(bl1, bl2, 2)
+
+
+def branches_BHVub(bl1, bl2):
+    """
+    Distance through a strict consensus tree.
+    Amenta et al. (2007) upper bound on BHV treespace geodesic.
+    http://doi.org/10.1016/j.ipl.2007.02.008
+    """
+    clades1 = bl1.keys()
+    clades2 = bl2.keys()
+    u1 = np.fromiter((bl1[cl] for cl in clades1 - clades2), dtype=float)
+    u2 = np.fromiter((bl2[cl] for cl in clades2 - clades1), dtype=float)
+    u3 = np.fromiter((bl1[cl] - bl2[cl] for cl in clades1 & clades2), dtype=float)
+    v = [(np.linalg.norm(u1) + np.linalg.norm(u2)), np.linalg.norm(u3)]
+    return np.linalg.norm(v)
+
+
+def rf_distance(ts1, ts2, dist_func):
+    """
+    Robinson-Foulds family of distances, calculated between two tree sequences.
+    """
+    assert ts1.num_samples == ts1.num_samples
+    assert ts1.sequence_length == ts2.sequence_length
+
+    ed1 = ts1.edge_diffs()
+    ed2 = ts2.edge_diffs()
+    try:
+        (interval1, edges_out1, edges_in1) = next(ed1)
+        (interval2, edges_out2, edges_in2) = next(ed2)
+    except StopIteration:
+        return 0
+
+    def branches(tree, node_enc):
+        b = dict()
+        for u, enc in enumerate(node_enc):
+            branch_length = tree.branch_length(u)
+            if branch_length:
+                b[enc.tobytes()] = branch_length
+        return b
+
+    trees1 = ts1.trees()
+    trees2 = ts2.trees()
+    nodes1 = iter(np.packbits(node_encodings(ts1), axis=-1))
+    nodes2 = iter(np.packbits(node_encodings(ts2), axis=-1))
+    branches1 = branches(next(trees1), next(nodes1))
+    branches2 = branches(next(trees2), next(nodes2))
+
+    def overlap(it1, it2):
+        if it1[1] < it2[0] or it2[1] < it1[0]:
+            return -1
+        lo = max(it1[0], it2[0])
+        hi = min(it1[1], it2[1])
+        return hi - lo
+
+    d = 0
+    while True:
+        span = overlap(interval1, interval2)
+        assert span > 0
+        d += span * dist_func(branches1, branches2)
+        x = interval2[1] - interval1[1]
+        if x >= 0:
+            # advance through ts1
+            try:
+                (interval1, edges_out1, edges_in1) = next(ed1)
+            except StopIteration:
+                break
+            # TODO update dict based on edges in/out
+            branches1 = branches(next(trees1), next(nodes1))
+        if x <= 0:
+            # advance through ts2
+            try:
+                (interval2, edges_out2, edges_in2) = next(ed2)
+            except StopIteration:
+                break
+            # TODO update dict based on edges in/out
+            branches2 = branches(next(trees2), next(nodes2))
+
+    d /= ts1.sequence_length
+    return d
+
+
+
 def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=False):
     if random_seed is not None:
         orig_ts = tskit.load(original_ts).simplify().randomly_split_polytomies(
@@ -321,6 +463,13 @@ def main(original_ts, inferred_ts, metric, random_seed, output_tot = 1, keep=Fal
         with open(filename, "wt") as stat:
             print(kc, file=stat)
         logging.info(f"Saved data for '{inferred_ts}': KCdist = {kc}")
+
+    elif metric == "RFts":
+        logging.info(f"Running ts-specific RF code")
+        rf_stat = rf_distance(orig_ts, cmp_ts, branches_l2)
+        with open(filename, "wt") as stat:
+            print(rf_stat, file=stat)
+        logging.info(f"Saved data for '{inferred_ts}': RFdist = {rf_stat}")
 
     elif metric == "RF":
         t_iter1 = orig_ts.trees()
@@ -415,7 +564,7 @@ if __name__ == "__main__":
     parser.add_argument("-k", "--keep_existing", action='store_true',
         help=
             "If the file already exists, skip the calc ")
-    parser.add_argument('--metric', '-m', choices=["KC", "RF"], default="RF", 
+    parser.add_argument('--metric', '-m', choices=["KC", "RFts", "RF"], default="RF", 
         help='which metric to calculate')
     parser.add_argument('--verbosity', '-v', action="count", default=0, 
         help='verbosity: output extra non-essential info')
