@@ -505,8 +505,8 @@ def run(params):
                         )
                     )
                     # save temporarily, so we can get stats even if not completed
-                    with open(filename, "wt") as stat:
-                        print(stat/pos, file=stat)
+                    with open(filename, "wt") as file:
+                        print(stat/pos, file=file)
             if pos >= end2:
                 t2 = next(t_iter2)
                 end2 = t2.interval[1]
