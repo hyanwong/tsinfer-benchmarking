@@ -231,20 +231,33 @@ logger = logging.getLogger(__name__)
 def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwargs):
     raise NotImplementedError
 
+def rnd_kc(params):
+    ts, random_seed = params
+    r_ts = tskit.Tree.generate_star(
+        ts.num_samples, span=ts.sequence_length).tree_sequence.randomly_split_polytomies(
+            random_seed=random_seed)
+    return ts.kc_distance(r_ts)
 
 def simulate_stdpopsim(
-    species, model, contig, each_pop_n, mutation_file=None, random_seed=123, skip_existing=False,
+    species,
+    model,
+    contig,
+    each_pop_n,
+    mutation_file=None,
+    random_seed=123,
+    skip_existing=False,
+    num_procs=1,
 ):
-    base_filename = f"data/{model}_sim_n{each_pop_n*3}"
-    tree_filename = f"{base_filename}_seed{random_seed}"
+    base_fn = f"data/{model}_sim_n{each_pop_n*3}"
+    tree_fn = f"{base_fn}_seed{random_seed}"
     logger.info(
         f"Simulating {species}:{contig} from stdpopsim using the {model} model: "
-        f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_filename}."
+        f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_fn}."
     )
-    if skip_existing and os.path.exists(tree_filename + ".trees"):
+    if skip_existing and os.path.exists(tree_fn + ".trees"):
         logger.warning(
-            f"Simulation file {tree_filename}.trees already exists, returning that.")
-        return base_filename, tree_filename
+            f"Simulation file {tree_fn}.trees already exists, returning that.")
+        return base_fn, tree_fn
 
     sample_data = None
     species = stdpopsim.get_species(species)
@@ -273,8 +286,8 @@ def simulate_stdpopsim(
         gene_conversion_rate=r_map.mean_recombination_rate * 10,
         gene_conversion_track_length=300,
         seed=random_seed)
+    tables = ts.dump_tables()
     if sample_data is not None:
-        tables = ts.dump_tables()
         pos = sample_data.sites_position[:]
         logger.info(
             f"Inserting {len(pos)} mutations at variable sites from {mutation_file}")
@@ -299,15 +312,50 @@ def simulate_stdpopsim(
                 # No more mutations - go to next tree
                 continue
         tables.sort()
-        ts = tables.tree_sequence()
         logger.debug(
             f"Inserted mutations at density {ts.num_mutations/ts.sequence_length}")
     interval = [int(l * 2/20), int(l * 5/20)]
     logger.debug(
         f"Cutting down tree seq to  {interval} for speed")
-    ts = ts.keep_intervals([interval]).trim()
-    ts.dump(tree_filename + ".trees")
-    return base_filename, tree_filename
+    tables.keep_intervals([interval])
+    tables.trim()
+
+    # Add info to the top-level metadata
+    user_data = {}
+
+    logger.info("Calculating the kc distance of the simulation against a flat tree")
+    star_tree = tskit.Tree.generate_star(
+            ts.num_samples, span=tables.sequence_length, record_provenance=False)
+    user_data['kc_max'] = tables.tree_sequence().kc_distance(star_tree.tree_sequence)
+    kc_array = []
+    max_repeats = 1000  # This can take a long time!
+    logger.info(
+        "Calculating the kc distance of the simulation against "
+        f"at most {max_repeats} random trees. This can take a long time."
+    )
+    seeds = range(random_seed, random_seed + 1000)
+    with multiprocessing.Pool(num_procs) as pool:
+        for i, kc in enumerate(pool.imap_unordered(
+            rnd_kc, zip(itertools.repeat(tables.tree_sequence()), seeds))
+        ):
+            kc_array.append(kc)
+            if i > 10:
+                se_mean = np.std(kc_array, ddof=1)/np.sqrt(i)
+                # break if SEM < 1/50th of mean KC. This can take along time
+                if se_mean/np.average(kc_array) < 0.02:
+                    logger.info(
+                        f"Stopped after {i} replicates as kc_max_split deemed accurate.")
+                    break
+        user_data['kc_max_split'] = np.average(kc_array)
+
+    if tables.metadata_schema != tskit.MetadataSchema({"codec":"json"}):
+        if tables.metadata:
+            raise RuntimeError("Metadata already exists, and is not JSON")
+        tables.metadata_schema = tskit.MetadataSchema({"codec":"json"})
+        tables.metadata = {}
+    tables.metadata = {"user_data": user_data, **tables.metadata}
+    tables.tree_sequence().dump(tree_fn + ".trees")
+    return base_fn, tree_fn
 
 def test_sim(seed):
     ts = msprime.simulate(
@@ -462,7 +510,7 @@ def setup_sample_file(base_filename, args, num_threads=1):
 Params = collections.namedtuple(
     "Params",
     "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
-    "kc_max, seed, error, source, skip_existing"
+    "kc_max, kc_max_split, seed, error, source, skip_existing"
 )
 
     
@@ -510,7 +558,8 @@ def run(params):
         prov = json.loads(inferred_anc_ts.provenances()[-1].record.encode())
         if ancestors.uuid != prov['parameters']['source']['uuid']:
             logger.warning(
-                "The loaded ancestors ts does not match the ancestors file")
+                "The loaded ancestors ts does not match the ancestors file. "
+                "Checking the site positions, and will abort if they don't match!")
             # We might be re-running this, but the simulation file is the same
             # So double-check that the positions in the ats are a subset of those in the
             # used sample data file
@@ -534,15 +583,14 @@ def run(params):
     if params.skip_existing and os.path.exists(ts_path):
         logger.info(f"Inferred ts file {ts_path} already exists, loading that.")
         inferred_ts = tskit.load(ts_path)
-        metadata = inferred_ts.metadata.decode()
-        if len(metadata) > 0:
-            loaded_params = json.loads(metadata)
+        try:
+            user_data = inferred_ts.metadata['user_data']
             try:
-                assert np.allclose(params.kc_max, loaded_params['kc_max'])
+                assert np.allclose(params.kc_max, user_data['kc_max'])
             except (KeyError, TypeError):
                 pass  # could be NaN e.g. if this is real data
-            return loaded_params
-        else:
+            return user_data
+        except (TypeError, KeyError):
             logging.warning("No metadata in {ts_path}: re-inferring these parameters")
 
     # Otherwise finish off the inference
@@ -578,12 +626,13 @@ def run(params):
     
     # Calculate KC
     try:
-        kc_poly = simplified_inferred_ts.kc_distance(tskit.load(prefix+".trees"))
+        simulated_ts = tskit.load(prefix+".trees")
+        kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
         logger.debug("KC poly calculated")
         polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
             random_seed=params.seed)
         logger.debug("Polytomies split for KC calc")
-        kc_split = polytomies_split_ts.kc_distance(tskit.load(prefix+".trees"))
+        kc_split = polytomies_split_ts.kc_distance(simulated_ts)
         logger.debug("KC split calculated")
     except FileNotFoundError:
         kc_poly = kc_split = None
@@ -598,7 +647,9 @@ def run(params):
         'edges': inferred_ts.num_edges,
         'muts': inferred_ts.num_mutations,
         'num_trees': inferred_ts.num_trees,
+        'num_sites': inferred_ts.num_sites,
         'kc_max': params.kc_max,
+        'kc_max_split': params.kc_max_split,
         'kc_poly': kc_poly,
         'kc_split': kc_split,
         'arity_mean': arity_mean,
@@ -612,8 +663,13 @@ def run(params):
     # Save the results into the ts metadata - this should allow us to reconstruct the
     # results table should anything go awry, or if we need to add more
     tables = inferred_ts.dump_tables()
-    tables.metadata = json.dumps(results).encode()
-    tables.tree_sequence().dump(ts_path)  # Overwrite stored ts with the one with metadata
+    if tables.metadata_schema != tskit.MetadataSchema({"codec":"json"}):
+        if tables.metadata:
+            raise RuntimeError("Metadata already exists in the ts, and is not JSON")
+        tables.metadata_schema = tskit.MetadataSchema({"codec":"json"})
+        tables.metadata = {}
+    tables.metadata = {"user_data": results, **tables.metadata}
+    tables.tree_sequence().dump(ts_path)  # Overwrite orig ts with the one with metadata
     return results
 
 
@@ -621,34 +677,35 @@ def run_replicate(rep, args):
     """
     The main function that runs a parameter set
     """
-    nt = args.num_threads
-    err = args.error
-    source = args.source
-    k = args.skip_existing_params
-    seed = rep+args.random_seed
+    params = {}  # The info to be passed though to each inference run
+    params['num_threads'] = args.num_threads
+    params['error'] = args.error
+    params['source'] = args.source
+    params['skip_existing'] = args.skip_existing_params
+    params['seed'] = rep+args.random_seed
     precision = [None] if len(args.precision) == 0 else args.precision
 
-    kc_max = None
-    if source.count(":") > 1:
+    if args.source.count(":") > 1:
         logger.debug("Simulating")
-        details = source.split(":")
+        details = args.source.split(":")
         base_name, ts_name = simulate_stdpopsim(
             species=details[0],
             contig=details[1],
             model=details[2],
             each_pop_n=args.each_pop_n,
             mutation_file=details[3] if len(details)>3 else None,
-            random_seed=seed,
-            skip_existing=args.skip_existing_params,
+            random_seed=params['seed'],
+            skip_existing=params['skip_existing'],
+            num_procs=args.num_processes,
         )
         sample_file, anc_file, rho, suffix, ts = setup_sampledata_from_simulation(
             ts_name,
-            random_seed=seed,
-            err=err,
-            num_threads=nt,
+            random_seed=params['seed'],
+            err=params['error'],
+            num_threads=params['num_threads'],
             cheat_breakpoints=args.cheat_breakpoints,
             use_sites_time=args.use_sites_time,
-            skip_existing=args.skip_existing_params,
+            skip_existing=params['skip_existing'],
         )
         prefix = ts_name + suffix
         base_name += suffix
@@ -660,13 +717,15 @@ def run_replicate(rep, args):
         sample_file, anc_file, rho, suffix, ts = setup_sample_file(prefix, args, nt)
         base_name = prefix + suffix
 
-    if ts is not None:
-        logger.info("Calculating the kc distance of the simulation against a flat tree")
-        star_tree = tskit.Tree.generate_star(
-            ts.num_samples, span=ts.sequence_length, record_provenance=False)
-        kc_max = ts.simplify().kc_distance(star_tree.tree_sequence)
+    params['kc_max'], params['kc_max_split'] = None, None
+    try:
+        params['kc_max'] = ts.metadata['user_data']['kc_max']
+        params['kc_max_split'] = ts.metadata['user_data']['kc_max_split']
+    except (TypeError, KeyError):
+        pass
+    
     param_iter = [
-        Params(sample_file, anc_file, rho, rma, rms, p, nt, kc_max, seed, err, source, k)
+        Params(sample_file, anc_file, rho, rma, rms, p, **params)
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
