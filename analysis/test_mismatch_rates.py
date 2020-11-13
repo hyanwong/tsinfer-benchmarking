@@ -10,7 +10,6 @@ import multiprocessing
 import re
 import time
 import logging
-import multiprocessing_logging
 import json
 
 import msprime
@@ -224,7 +223,6 @@ def randomly_split_polytomies(
 tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies        
 
 logging.basicConfig()
-multiprocessing_logging.install_mp_handler()
 logger = logging.getLogger(__name__)
 
 
@@ -317,10 +315,10 @@ def simulate_stdpopsim(
         logger.debug(
             f"Inserted mutations at density {ts.num_mutations/ts.sequence_length}")
     interval = [int(l * 2/20), int(l * 5/20)]
-    logger.debug(
-        f"Cutting down tree seq to  {interval} for speed")
     tables.keep_intervals([interval])
     tables.trim()
+    logger.debug(
+        f"Cut down tree seq to  {interval} ({tables.sites.num_rows} sites) for speed")
 
     # Add info to the top-level metadata
     user_data = {}
