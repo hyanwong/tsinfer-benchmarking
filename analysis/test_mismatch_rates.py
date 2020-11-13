@@ -629,8 +629,8 @@ def run(params):
     # Calculate KC
     try:
         simulated_ts = tskit.load(prefix+".trees")
-        sim_ts_size = simulated_ts.nbytes
-        sim_ts_min_size = simulated_ts.simplify(
+        sim_ts_bytes = simulated_ts.nbytes
+        sim_ts_min_bytes = simulated_ts.simplify(
             keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
         kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
         logger.debug("KC poly calculated")
@@ -640,34 +640,34 @@ def run(params):
         kc_split = polytomies_split_ts.kc_distance(simulated_ts)
         logger.debug("KC split calculated")
     except FileNotFoundError:
-        sim_ts_size = sim_ts_min_size = None
+        sim_ts_bytes = sim_ts_min_bytes = None
         kc_poly = kc_split = None
     
     results = {
-        'n': inferred_ts.num_samples,
         'abs_ma_mis': ma_mis,
         'abs_ms_mis': ms_mis,
-        'rel_ma_mis': params.ma_mis_rate,
-        'rel_ms_mis': params.ms_mis_rate,
-        'error': params.error,
-        'precision': precision,
-        'edges': inferred_ts.num_edges,
-        'muts': inferred_ts.num_mutations,
-        'num_trees': inferred_ts.num_trees,
-        'num_sites': inferred_ts.num_sites,
-        'kc_max': params.kc_max,
-        'kc_max_split': params.kc_max_split,
-        'kc_poly': kc_poly,
-        'kc_split': kc_split,
         'arity_mean': arity_mean,
         'arity_var': arity_var,
-        'seed': params.seed,
+        'edges': inferred_ts.num_edges,
+        'error': params.error,
+        'kc_max_split': params.kc_max_split,
+        'kc_max': params.kc_max,
+        'kc_poly': kc_poly,
+        'kc_split': kc_split,
+        'muts': inferred_ts.num_mutations,
+        'n': inferred_ts.num_samples,
+        'num_sites': inferred_ts.num_sites,
+        'num_trees': inferred_ts.num_trees,
+        'precision': precision,
         'proc_time': process_time,
-        'sim_ts_size': sim_ts_size,
-        'sim_ts_min_size': sim_ts_min_size,
-        'ts_size': inferred_ts.nbytes,
-        'ts_path': ts_path,
+        'rel_ma_mis': params.ma_mis_rate,
+        'rel_ms_mis': params.ms_mis_rate,
+        'seed': params.seed,
+        'sim_ts_min_bytes': sim_ts_min_bytes,
+        'sim_ts_bytes': sim_ts_bytes,
         'source': params.source,
+        'ts_bytes': inferred_ts.nbytes,
+        'ts_path': ts_path,
     }
     # Save the results into the ts metadata - this should allow us to reconstruct the
     # results table should anything go awry, or if we need to add more
