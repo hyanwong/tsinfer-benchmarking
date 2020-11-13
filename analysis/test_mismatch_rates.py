@@ -510,8 +510,8 @@ def setup_sample_file(base_filename, args, num_threads=1):
 # Parameters passed to each subprocess
 Params = collections.namedtuple(
     "Params",
-    "sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, num_threads, "
-    "kc_max, kc_max_split, seed, error, source, skip_existing"
+    "ts_file, sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, "
+    "num_threads, kc_max, kc_max_split, seed, error, source, skip_existing"
 )
 
     
@@ -623,24 +623,25 @@ def run(params):
     
     # Calculate span of root nodes in simplified tree
     
+    sim_ts_bytes = sim_ts_min_bytes = None
+    kc_poly = kc_split = None
     
-    # Calculate KC
-    try:
-        simulated_ts = tskit.load(prefix+".trees")
-        sim_ts_bytes = simulated_ts.nbytes
-        sim_ts_min_bytes = simulated_ts.simplify(
-            keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
-        kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
-        logger.debug("KC poly calculated")
-        polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
-            random_seed=params.seed)
-        logger.debug("Polytomies split for KC calc")
-        kc_split = polytomies_split_ts.kc_distance(simulated_ts)
-        logger.debug("KC split calculated")
-    except FileNotFoundError:
-        sim_ts_bytes = sim_ts_min_bytes = None
-        kc_poly = kc_split = None
-    
+    if params.ts_file is not None:
+        try:
+            simulated_ts = tskit.load(params.ts_file + ".trees")
+            sim_ts_bytes = simulated_ts.nbytes
+            sim_ts_min_bytes = simulated_ts.simplify(
+                keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
+            kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
+            logger.debug("KC poly calculated")
+            polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
+                random_seed=params.seed)
+            logger.debug("Polytomies split for KC calc")
+            kc_split = polytomies_split_ts.kc_distance(simulated_ts)
+            logger.debug("KC split calculated")
+        except FileNotFoundError:
+            pass
+
     results = {
         'abs_ma_mis': ma_mis,
         'abs_ms_mis': ms_mis,
@@ -721,7 +722,9 @@ def run_replicate(rep, args):
         if not source.endswith(".samples"):
             raise ValueError("Sample data file must end with '.samples'")
         prefix = source[:-len(".samples")]
-        sample_file, anc_file, rho, suffix, ts = setup_sample_file(prefix, args, nt)
+        sample_file, anc_file, rho, suffix, ts = setup_sample_file(
+            prefix, args, params['num_threads'])
+        ts_name = None
         base_name = prefix + suffix
 
     params['kc_max'], params['kc_max_split'] = None, None
@@ -732,7 +735,7 @@ def run_replicate(rep, args):
         pass
     
     param_iter = [
-        Params(sample_file, anc_file, rho, rma, rms, p, **params)
+        Params(ts_name, sample_file, anc_file, rho, rma, rms, p, **params)
             for rms in args.match_samples_mismatch
                 for rma in args.match_ancestors_mismatch
                     for p in precision]
