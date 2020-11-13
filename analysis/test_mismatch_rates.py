@@ -731,7 +731,7 @@ def run_replicate(rep, args):
     try:
         params['kc_max'] = ts.metadata['user_data']['kc_max']
         params['kc_max_split'] = ts.metadata['user_data']['kc_max_split']
-    except (TypeError, KeyError):
+    except (TypeError, KeyError, AttributeError):
         pass
     
     param_iter = [
