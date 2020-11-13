@@ -718,10 +718,10 @@ def run_replicate(rep, args):
         prefix = ts_name + suffix
         base_name += suffix
     else:
-        logger.debug(f"Using provided sample data file {source}")
-        if not source.endswith(".samples"):
+        logger.debug(f"Using provided sample data file {params['source']}")
+        if not params['source'].endswith(".samples"):
             raise ValueError("Sample data file must end with '.samples'")
-        prefix = source[:-len(".samples")]
+        prefix = params['source'][:-len(".samples")]
         sample_file, anc_file, rho, suffix, ts = setup_sample_file(
             prefix, args, params['num_threads'])
         ts_name = None
