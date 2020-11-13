@@ -463,8 +463,8 @@ def run(params):
     filename = inferred_ts + suffix
     if keep and os.path.exists(filename):
         logging.warning(
-            "'--keep_existing' specified & file '{filename}' already exists. Aborting.")
-        filename = None
+            f"'--keep_existing' specified & file '{filename}' already exists. Aborting.")
+        return None, None
 
     if metric == "KC":
         stat = orig_ts.kc_distance(cmp_ts)
@@ -501,12 +501,12 @@ def run(params):
                         .format(
                             inferred_ts,
                             t1.index / orig_ts.num_trees * 100,
-                            rf_stat/pos,
+                            stat/pos,
                         )
                     )
                     # save temporarily, so we can get stats even if not completed
                     with open(filename, "wt") as stat:
-                        print(rf_stat/pos, file=stat)
+                        print(stat/pos, file=stat)
             if pos >= end2:
                 t2 = next(t_iter2)
                 end2 = t2.interval[1]
