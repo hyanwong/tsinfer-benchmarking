@@ -50,10 +50,6 @@ def randomly_split_polytomies(
         epsilon = 1e-10
     rng = np.random.default_rng(seed=random_seed)
 
-    def is_unknown_time_array(a):
-        np_unknown_time = np.float64(tskit.UNKNOWN_TIME)
-        return a.view(np.uint64) == np_unknown_time.view(np.uint64)
-
     def resolve_polytomy(parent_node_id, child_ids, new_nodes_by_time_desc):
         """
         For a polytomy and list of child node ids, return a list of (child, parent)
@@ -109,7 +105,7 @@ def randomly_split_polytomies(
     # We can save a lot of effort if we don't need to check the time of mutations
     # We definitely don't need to check on the first iteration, a
     check_mutations = np.any(
-        np.logical_not(is_unknown_time_array(self.mutations.time))
+        np.logical_not(tskit.is_unknown_time(self.mutations.time))
     )
     ts = self.tree_sequence()  # Only needed to check mutations
     tree_iter = ts.trees()  # ditto
