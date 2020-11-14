@@ -578,7 +578,7 @@ def run(params):
             recombination_rate=params.rec_rate,
             mismatch_rate=ma_mis)
         inferred_anc_ts.dump(ats_path)
-        logger.info(f"MA done: abs_ma_mis rate = {ma_mis}")
+        logger.info(f"MA done: rel/abs_ma_mis rate = {params.ma_mis_rate}/{ma_mis}")
 
     ts_path = inf_prefix + ".trees"
     if params.skip_existing and os.path.exists(ts_path):
@@ -595,7 +595,7 @@ def run(params):
             logging.warning("No metadata in {ts_path}: re-inferring these parameters")
 
     # Otherwise finish off the inference
-    logger.info(f"MS running: will save to {ts_path}")
+    logger.info(f"MS running with {params.num_threads} threads: will save to {ts_path}")
     inferred_ts = tsinfer.match_samples(
         samples,
         inferred_anc_ts,
@@ -604,7 +604,7 @@ def run(params):
         recombination_rate=params.rec_rate,
         mismatch_rate=ms_mis)
     process_time = time.process_time() - start_time
-    logger.info(f"MS done: abs_ms_mis rate = {ms_mis}")
+    logger.info(f"MS done: rel/abs_ms_mis rate = {params.ms_mis_rate}/{ms_mis}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -629,6 +629,7 @@ def run(params):
     if params.ts_file is not None:
         try:
             simulated_ts = tskit.load(params.ts_file + ".trees")
+            logger.info(f"Calculating KC distances for {ts_path}")
             sim_ts_bytes = simulated_ts.nbytes
             sim_ts_min_bytes = simulated_ts.simplify(
                 keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
