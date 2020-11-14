@@ -756,10 +756,11 @@ def run_replicate(rep, args):
                 print(",".join(result_str), file=file, flush=True)
                 treefiles.append(result['ts_path'])
         else:
+            num_procs = min(len(param_iter), args.num_processes)
             logger.info(
                 f"Parallelising {len(param_iter)} parameter combinations "
-                f"over {args.num_processes} processes")
-            with multiprocessing.Pool(args.num_processes) as pool:
+                f"over {num_procs} processes")
+            with multiprocessing.Pool(num_procs) as pool:
                 for result in pool.imap_unordered(run, param_iter):
                     # Save to a results file.
                     if len(headers) == 0:
