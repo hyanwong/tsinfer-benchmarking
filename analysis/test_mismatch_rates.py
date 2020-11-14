@@ -340,7 +340,7 @@ def simulate_stdpopsim(
         f"Calculating KC distance of the sim against at most {max_reps} * {ts.num_trees}"
         f" random trees using {num_procs} parallel threads. This could take a while."
     )
-    seeds = range(seed, seed + 1000)
+    seeds = range(seed, seed + max_reps)
     with multiprocessing.Pool(num_procs) as pool:
         for i, kc in enumerate(pool.imap_unordered(
             rnd_kc, zip(itertools.repeat(ts), seeds))
@@ -349,7 +349,7 @@ def simulate_stdpopsim(
             if i > 10:
                 se_mean = np.std(kc_array, ddof=1)/np.sqrt(i)
                 # break if SEM < 1/50th of mean KC. This can take along time
-                if se_mean/np.average(kc_array) < 0.02:
+                if se_mean/np.average(kc_array) < 0.01:
                     logger.info(
                         f"Stopped after {i} replicates as kc_max_split deemed accurate.")
                     break
