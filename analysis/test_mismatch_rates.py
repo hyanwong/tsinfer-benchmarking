@@ -248,7 +248,7 @@ def simulate_stdpopsim(
     skip_existing=False,
     num_procs=1,
 ):
-    base_fn = f"data/{model}_sim_n{num_samples}"
+    base_fn = f"{model}_{contig}_n{num_samples}"
     tree_fn = f"{base_fn}_seed{seed}"
     logger.info(f"Using {species}:{contig} from stdpopsim using the {model} model")
     if skip_existing and os.path.exists(tree_fn + ".trees"):
@@ -371,7 +371,7 @@ def test_sim(seed):
         mutation_rate=1e-2,
         recombination_rate=1e-2,
         random_seed=seed)
-    return ts, f"data/test_sim{seed}"
+    return ts, f"test_sim{seed}"
 
 
 def physical_to_genetic(recombination_map, input_physical_positions):
