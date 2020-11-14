@@ -242,18 +242,15 @@ def simulate_stdpopsim(
     species,
     model,
     contig,
-    each_pop_n,
+    num_samples,
     mutation_file=None,
-    random_seed=123,
+    seed=123,
     skip_existing=False,
     num_procs=1,
 ):
-    base_fn = f"data/{model}_sim_n{each_pop_n*3}"
-    tree_fn = f"{base_fn}_seed{random_seed}"
-    logger.info(
-        f"Simulating {species}:{contig} from stdpopsim using the {model} model: "
-        f"3x{each_pop_n} samples, seed {random_seed}, base filename {base_fn}."
-    )
+    base_fn = f"data/{model}_sim_n{num_samples}"
+    tree_fn = f"{base_fn}_seed{seed}"
+    logger.info(f"Using {species}:{contig} from stdpopsim using the {model} model")
     if skip_existing and os.path.exists(tree_fn + ".trees"):
         logger.info(
             f"Simulation file {tree_fn}.trees already exists, returning that.")
@@ -261,6 +258,17 @@ def simulate_stdpopsim(
 
     sample_data = None
     species = stdpopsim.get_species(species)
+    model = species.get_demographic_model(model)
+    num_pops = model.num_sampling_populations
+    if num_samples < num_pops or num_samples % num_pops != 0:
+        raise ValueError(
+            f"num_samples must be an integer multiple of {num_pops} "
+            f"(or 2 x {num_pops} if diploid sequencing error is injected)"
+        )
+    pop_n = num_samples // num_pops
+    logger.info(
+        f"Simulating {num_pops}x{pop_n} samples, seed {seed}, file prefix '{base_fn}'."
+    )
     contig = species.get_contig(contig)
     l = contig.recombination_map.get_sequence_length()
     if mutation_file is not None:
@@ -276,16 +284,14 @@ def simulate_stdpopsim(
             genetic_map=contig.genetic_map,
         )
     r_map = contig.recombination_map
-    model = species.get_demographic_model(model)
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    # Pick samples from the first 3 pops: this is OOA specific, and needs changing
-    samples = model.get_samples(each_pop_n, each_pop_n, each_pop_n)
+    samples = model.get_samples(*([pop_n] * num_pops))
     engine = stdpopsim.get_engine('msprime')
     ts = engine.simulate(
         model, contig, samples,
         gene_conversion_rate=r_map.mean_recombination_rate * 10,
         gene_conversion_track_length=300,
-        seed=random_seed)
+        seed=seed)
     tables = ts.dump_tables()
     if sample_data is not None:
         pos = sample_data.sites_position[:]
@@ -334,7 +340,7 @@ def simulate_stdpopsim(
         f"Calculating KC distance of the sim against at most {max_reps} * {ts.num_trees}"
         f" random trees using {num_procs} parallel threads. This could take a while."
     )
-    seeds = range(random_seed, random_seed + 1000)
+    seeds = range(seed, seed + 1000)
     with multiprocessing.Pool(num_procs) as pool:
         for i, kc in enumerate(pool.imap_unordered(
             rnd_kc, zip(itertools.repeat(ts), seeds))
@@ -694,16 +700,16 @@ def run_replicate(rep, args):
     params['seed'] = rep+args.random_seed
     precision = [None] if len(args.precision) == 0 else args.precision
 
-    if args.source.count(":") > 1:
+    if args.source.count(":") >= 3:
         logger.debug("Simulating")
         details = args.source.split(":")
         base_name, ts_name = simulate_stdpopsim(
             species=details[0],
             contig=details[1],
             model=details[2],
-            each_pop_n=args.each_pop_n,
-            mutation_file=details[3] if len(details)>3 else None,
-            random_seed=params['seed'],
+            num_samples=int(details[3]),
+            mutation_file=details[4] if len(details)>4 else None,
+            seed=params['seed'],
             skip_existing=params['skip_existing'],
             num_procs=args.num_processes,
         )
@@ -786,22 +792,20 @@ if __name__ == "__main__":
         [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 1e-4, 1e-5])
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", nargs='?', default="HomSap:chr20:OutOfAfrica_3G09",
+    parser.add_argument("source", nargs='?',
+        default="HomSap:chr20:OutOfAfrica_3G09:1500",
         help=
             "A string giving the source for the data used to test mismatch rates. "
-            "If this contains at least 2 colons, it is taken as a specification for "
-            "stspopsim in the form of species:contig:model(:optional_file), where the "
-            "optional_file, if given, is a sample_data file providing the sites used as"
-            "targets for mutation. If the source contains one or no colons, it "
-            "should be a tsinfer sample file ending in '.samples', in which case "
-            "simulation is not perfomed, but instead the script uses (potentially) "
+            "If this contains at least 3 colons, it is taken as a specification for "
+            "stspopsim in the form of species:contig:model:num_samples(:optional_file), "
+            "where the optional_file, if given, is a sample_data file providing the "
+            "sites used as targets for mutation. If the source contains one or no "
+            "colons, it should be a tsinfer sample file ending in '.samples', in which "
+            "case simulation is not perfomed, but instead the script uses (potentially) "
             "real data from the specified file. If no genetic map is provided "
             "via the -m switch, and the filename contains chrNN where "
             "'NN' is a number, assume this is a human samples file and use the "
             "appropriate recombination map from the thousand genomes project"
-    )
-    parser.add_argument("-N", "--each_pop_n", type=int, default=500,
-        help="The number of samples in each stdpopsim population. Should be even."
     )
     parser.add_argument("-r", "--replicates", type=int, default=1)
     parser.add_argument("-s", "--random_seed", type=int, default=1)
