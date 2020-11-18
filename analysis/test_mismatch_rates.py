@@ -267,7 +267,7 @@ def simulate_stdpopsim(
         )
     pop_n = num_samples // num_pops
     logger.info(
-        f"Simulating {num_pops}x{pop_n} samples, seed {seed}, file prefix '{base_fn}'."
+        f"Simulating {num_pops}x{pop_n} samples, seed {seed}, file prefix '{tree_fn}'."
     )
     contig = species.get_contig(contig)
     l = contig.recombination_map.get_sequence_length()
