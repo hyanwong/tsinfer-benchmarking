@@ -476,7 +476,10 @@ def run(params):
 
     elif metric == "RFinfo":
         logging.info(f"Running ts-specific RF code")
-        with tempfile.NamedTemporaryFile() as f1, tempfile.NamedTemporaryFile() as f2:
+        with (
+            tempfile.NamedTemporaryFile("wt") as f1,
+            tempfile.NamedTemporaryFile("wt") as f2,
+        ):
             f1.write(orig_ts.to_nexus(precision=1))
             f2.write(cmp_ts.to_nexus(precision=1))
             f1.flush
