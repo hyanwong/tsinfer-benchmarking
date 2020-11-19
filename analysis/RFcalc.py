@@ -16,7 +16,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"  # limit number of threads so we can run loads of these in parallel
 import collections
 import json
-import tempfile
+from tempfile import NamedTemporaryFile
 import logging
 import argparse
 import itertools
@@ -476,10 +476,7 @@ def run(params):
 
     elif metric == "RFinfo":
         logging.info(f"Running ts-specific RF code")
-        with (
-            tempfile.NamedTemporaryFile("wt") as f1,
-            tempfile.NamedTemporaryFile("wt") as f2,
-        ):
+        with NamedTemporaryFile("wt") as f1, NamedTemporaryFile("wt") as f2:
             f1.write(orig_ts.to_nexus(precision=1))
             f2.write(cmp_ts.to_nexus(precision=1))
             f1.flush
