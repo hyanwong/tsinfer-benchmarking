@@ -37,7 +37,7 @@ def get_metric_names():
 def get_metrics(true_nexus_fn, inferred_nexus_fns, variant_positions = None, randomly_resolve_inferred=False):
     """
     Returns a dictionary of metrics for the specified pair of nexus files.
-    :param str true_nexus_fn: The path to the file to write the SVG. If None, do not
+    :param str true_nexus_fn: The path to the file read. If None, do not
         write to file.
     :param str (or array of str) inferred_nexus_fns: Other filenames.
     :param list variant_positions: The height of the image in pixels.

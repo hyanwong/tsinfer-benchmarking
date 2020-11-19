@@ -22,6 +22,7 @@ import argparse
 import itertools
 import time
 import multiprocessing
+import ARG_metrics
 
 import tskit
 from tskit import provenance
@@ -473,6 +474,15 @@ def run(params):
         logging.info(f"Running ts-specific RF code")
         stat = rf_distance(orig_ts, cmp_ts, branches_l0)
 
+    elif metric == "RFinfo":
+        logging.info(f"Running ts-specific RF code")
+        with tempfile.NamedTemporaryFile() as f1, tempfile.NamedTemporaryFile() as f2:
+            f1.write(orig_ts.to_nexus(precision=1))
+            f2.write(cmp_ts.to_nexus(precision=1))
+            f1.flush
+            f2.flush
+            stat = ARG_metrics.get_metrics(f1.name, f2.name)['RFinfo']
+
     elif metric == "RF":
         t_iter1 = orig_ts.trees()
         t_iter2 = cmp_ts.trees()
@@ -586,7 +596,7 @@ if __name__ == "__main__":
     parser.add_argument("-k", "--keep_existing", action='store_true',
         help=
             "If the file already exists, skip the calc ")
-    parser.add_argument('--metric', '-m', choices=["KC", "RFts", "RF"], default="RF", 
+    parser.add_argument('--metric', '-m', choices=["KC", "RFts", "RFinfo", "RF"], default="RF", 
         help='which metric to calculate')
     parser.add_argument('--verbosity', '-v', action="count", default=0, 
         help='verbosity: output extra non-essential info')
