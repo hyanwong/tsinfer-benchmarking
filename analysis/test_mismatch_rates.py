@@ -19,208 +19,7 @@ import stdpopsim #  Requires a version of msprime which allows gene conversion
 import tsinfer
 
 from error_generation import add_errors
-
-
-# !! Delete this once https://github.com/tskit-dev/tskit/pull/815 is merged
-def randomly_split_polytomies(
-    ts,
-    *,
-    epsilon=None,
-    squash_edges=True,
-    record_provenance=True,
-    random_seed=None,
-):
-    """
-    Return a tree sequence with extra nodes and edges
-    so that any node with greater than 2 children (i.e. a multifurcation
-    or "polytomy") is resolved into successive bifurcations. For any
-    multifucating node ``u`` with ``n`` children, the :math:`(2n - 3)!!`
-    possible bifurcating topologies are produced with equal probability.
-    """
-    self = ts.dump_tables()  # Hack `self` to point to tables: allows straight code copy
-    if epsilon is None:
-        epsilon = 1e-10
-    rng = np.random.default_rng(seed=random_seed)
-
-    def is_unknown_time_array(a):
-        np_unknown_time = np.float64(tskit.UNKNOWN_TIME)
-        return a.view(np.uint64) == np_unknown_time.view(np.uint64)
-
-    def resolve_polytomy(parent_node_id, child_ids, new_nodes_by_time_desc):
-        """
-        For a polytomy and list of child node ids, return a list of (child, parent)
-        tuples, describing a bifurcating tree, rooted at parent_node_id, where the
-        new_nodes_by_time_desc have been used to break polytomies. All possible
-        topologies should be equiprobable.
-        """
-        nonlocal rng
-        assert len(child_ids) == len(new_nodes_by_time_desc) + 2
-        # Polytomies broken by sequentially splicing onto edges, so an initial edge
-        # is required. This will always remain above the top node & is removed later
-        edges = [
-            [child_ids[0], None],
-        ]
-        # We know beforehand how many random ints are needed: generate them all now
-        edge_choice = rng.integers(0, np.arange(1, len(child_ids) * 2 - 1, 2))
-        tmp_new_node_lab = [parent_node_id] + new_nodes_by_time_desc
-        assert len(edge_choice) == len(child_ids) - 1
-        for node_lab, child_id, target_edge_id in zip(
-            tmp_new_node_lab, child_ids[1:], edge_choice
-        ):
-            target_edge = edges[target_edge_id]
-            # Insert in the right place, to keep edges in parent time order
-            edges.insert(target_edge_id, [child_id, node_lab])
-            edges.insert(target_edge_id, [target_edge[0], node_lab])
-            target_edge[0] = node_lab
-        top_edge = edges.pop()  # remove the edge above the top node
-        assert top_edge[1] is None
-
-        # Re-map the internal nodes IDs so they are used in time order
-        real_node = iter(new_nodes_by_time_desc)
-        node_map = {c: c for c in child_ids}
-        node_map[edges[-1][1]] = parent_node_id  # last edge == oldest parent
-        for e in reversed(edges):
-            # Reversing along the edges, parents are in inverse time order
-            for idx in (1, 0):  # look at parent (1) then child (0)
-                if e[idx] not in node_map:
-                    node_map[e[idx]] = next(real_node)
-                e[idx] = node_map[e[idx]]
-        assert len(node_map) == len(new_nodes_by_time_desc) + len(child_ids) + 1
-        return edges
-
-    edge_table = self.edges
-    node_table = self.nodes
-    # Store existing left, so we can change it if the edge is split
-    existing_edges_left = edge_table.left
-    # Keep other edge arrays etc. for fast read access
-    existing_edges_right = edge_table.right
-    existing_edges_parent = edge_table.parent
-    existing_edges_child = edge_table.child
-    existing_node_time = node_table.time
-
-    # We can save a lot of effort if we don't need to check the time of mutations
-    # We definitely don't need to check on the first iteration, a
-    check_mutations = np.any(
-        np.logical_not(is_unknown_time_array(self.mutations.time))
-    )
-    ts = self.tree_sequence()  # Only needed to check mutations
-    tree_iter = ts.trees()  # ditto
-
-    edge_table.clear()
-
-    edges_from_node = collections.defaultdict(set)  # Active descendant edge ids
-    nodes_changed = set()
-
-    for interval, e_out, e_in in ts.edge_diffs(include_terminal=True):
-        pos = interval[0]
-        prev_tree = None if pos == 0 else next(tree_iter)
-
-        for edge in itertools.chain(e_out, e_in):
-            if edge.parent != tskit.NULL:
-                nodes_changed.add(edge.parent)
-
-        if check_mutations and prev_tree is not None:
-            # This is grim. There must be a more efficient way.
-            # we can probably sort mutations by node then by time, then by time of 
-            # It would also help if mutations were sorted such that all mutations
-            # above the same node appeared consecutively, with oldest first.
-            oldest_mutation_for_node = {}
-            for site in prev_tree.sites():
-                for mutation in site.mutations:
-                    if not util.is_unknown_time(mutation.time):
-                        oldest_mutation_for_node[mutation.node] = max(
-                            oldest_mutation_for_node[mutation.node], mutation.time
-                        )
-
-        for parent_node in nodes_changed:
-            child_edge_ids = edges_from_node[parent_node]
-            if len(child_edge_ids) >= 3:
-                # We have a previous polytomy to break
-                parent_time = existing_node_time[parent_node]
-                new_nodes = []
-                child_ids = existing_edges_child[list(child_edge_ids)]
-                left = None
-                max_time = 0
-                # Split existing edges
-                for edge_id, child_id in zip(child_edge_ids, child_ids):
-                    max_time = max(max_time, existing_node_time[child_id])
-                    if check_mutations and child_id in oldest_mutation_for_node:
-                        max_time = max(max_time, oldest_mutation_for_node[child_id])
-                    if left is None:
-                        left = existing_edges_left[edge_id]
-                    else:
-                        assert left == existing_edges_left[edge_id]
-                    if existing_edges_right[edge_id] > interval[0]:
-                        # make sure we carry on the edge after this polytomy
-                        existing_edges_left[edge_id] = pos
-                # Arbitrarily, if epsilon is not small enough, use half the min dist
-                dt = min((parent_time - max_time) / (len(child_ids) * 2), epsilon)
-                # Break this N-degree polytomy. This requires N-2 extra nodes to be
-                # introduced: create them here in order of decreasing time
-                new_nodes = [
-                    node_table.add_row(time=parent_time - (i * dt))
-                    for i in range(1, len(child_ids) - 1)
-                ]
-                # print("New nodes:", new_nodes, node_table.time[new_nodes])
-                for new_edge in resolve_polytomy(parent_node, child_ids, new_nodes):
-                    edge_table.add_row(
-                        left=left, right=pos, child=new_edge[0], parent=new_edge[1],
-                    )
-                    # print("new_edge: left={}, right={}, child={}, parent={}"
-                    #    .format(left, pos, new_edge[0], new_edge[1]))
-            else:
-                # Previous node was not a polytomy - just add the edges_out
-                for edge_id in child_edge_ids:
-                    if existing_edges_right[edge_id] == pos:  # is an out edge
-                        edge_table.add_row(
-                            left=existing_edges_left[edge_id],
-                            right=pos,
-                            parent=parent_node,
-                            child=existing_edges_child[edge_id],
-                        )
-
-        for edge in e_out:
-            if edge.parent != tskit.NULL:
-                # print("REMOVE", edge.id)
-                edges_from_node[edge.parent].remove(edge.id)
-        for edge in e_in:
-            if edge.parent != tskit.NULL:
-                # print("ADD", edge.id)
-                edges_from_node[edge.parent].add(edge.id)
-
-        # Chop if we have created a polytomy: the polytomy itself will be resolved
-        # at a future iteration, when any edges move into or out of the polytomy
-        while nodes_changed:
-            node = nodes_changed.pop()
-            edge_ids = edges_from_node[node]
-            # print("Looking at", node)
-
-            if len(edge_ids) == 0:
-                del edges_from_node[node]
-            # if this node has changed *to* a polytomy, we need to cut all of the
-            # child edges that were previously present by adding the previous
-            # segment and left-truncating
-            elif len(edge_ids) >= 3:
-                for edge_id in edge_ids:
-                    if existing_edges_left[edge_id] < interval[0]:
-                        self.edges.add_row(
-                            left=existing_edges_left[edge_id],
-                            right=interval[0],
-                            parent=existing_edges_parent[edge_id],
-                            child=existing_edges_child[edge_id],
-                        )
-                    existing_edges_left[edge_id] = interval[0]
-    assert len(edges_from_node) == 0
-    self.sort()
-
-    if squash_edges:
-        self.edges.squash()
-        self.sort()  # Bug: https://github.com/tskit-dev/tskit/issues/808
-
-    return self.tree_sequence()
-
-# Monkey-patch until https://github.com/tskit-dev/tskit/pull/815 is merged
-tskit.TreeSequence.randomly_split_polytomies = randomly_split_polytomies        
+import intervals
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -231,11 +30,12 @@ def make_switch_errors(sample_data, switch_error_rate=0, random_seed=None, **kwa
 
 def rnd_kc(params):
     ts, random_seed = params
-    s = tskit.Tree.generate_star(ts.num_samples, span=ts.sequence_length).tree_sequence
+    s = tskit.Tree.generate_star(
+        ts.num_samples, span=ts.sequence_length, sample_lists=True)
     kc = 0
     for tree in ts.trees(sample_lists = True):
-        kc += tree.span * tree.kc_distance(s.randomly_split_polytomies(
-            random_seed=random_seed + tree.index).first(sample_lists = True)) 
+        kc += tree.span * tree.kc_distance(s.split_polytomies(
+            random_seed=random_seed + tree.index, sample_lists=True)) 
     return kc / ts.sequence_length
 
 def simulate_stdpopsim(
@@ -320,7 +120,7 @@ def simulate_stdpopsim(
         tables.sort()
         logger.debug(
             f"Inserted mutations at density {ts.num_mutations/ts.sequence_length}")
-    interval = [int(l * 2/20), int(l * 5/20)]
+    interval = [int(l * 2/20), int(l * 2/20)+1e7] # 10Mb near the start, not centromeric
     tables.keep_intervals([interval])
     tables.trim()
     logger.debug(
@@ -348,7 +148,7 @@ def simulate_stdpopsim(
             kc_array.append(kc)
             if i > 10:
                 se_mean = np.std(kc_array, ddof=1)/np.sqrt(i)
-                # break if SEM < 1/50th of mean KC. This can take along time
+                # break if SEM < 1/100th of mean KC. This can take along time
                 if se_mean/np.average(kc_array) < 0.01:
                     logger.info(
                         f"Stopped after {i} replicates as kc_max_split deemed accurate.")
@@ -372,13 +172,6 @@ def test_sim(seed):
         recombination_rate=1e-2,
         random_seed=seed)
     return ts, f"test_sim{seed}"
-
-
-def physical_to_genetic(recombination_map, input_physical_positions):
-    map_pos = recombination_map.get_positions()
-    map_rates = recombination_map.get_rates()
-    map_genetic_positions = np.insert(np.cumsum(np.diff(map_pos) * map_rates[:-1]), 0, 0)
-    return np.interp(input_physical_positions, map_pos, map_genetic_positions)
 
 
 def setup_sampledata_from_simulation(
@@ -424,7 +217,7 @@ def setup_sampledata_from_simulation(
         suffix += f"_ae{err}"
         sd_path = prefix + suffix + ".samples"
         if skip_existing and os.path.exists(sd_path):
-            logger.info(f"Simulation file {sd_path} already exists, loading that.")
+            logger.info(f"Sample file {sd_path} already exists, loading that.")
             sd = tsinfer.load(sd_path)
         else:
             error_file = add_errors(
@@ -459,9 +252,9 @@ def setup_sampledata_from_simulation(
 
     inference_pos = anc.sites_position[:]
 
-    rho = np.diff(anc.sites_position[:])/sd.sequence_length
-    rho = np.concatenate(([0.0], rho))
+    rho = 1e-8  # shouldn't matter what this is - it it relative to mismatch
     if cheat_breakpoints:
+        raise NotImplementedError("Need to make a RateMap with higher r at breakpoints")
         breakpoint_positions = np.array(list(ts.breakpoints()))
         inference_positions = anc.sites_position[:]
         breakpoints = np.searchsorted(inference_positions, breakpoint_positions)
@@ -473,8 +266,8 @@ def setup_sampledata_from_simulation(
 
 def setup_sample_file(base_filename, args, num_threads=1):
     """
-    Return a the sample data file, the ancestors file, a
-    corresponding recombination rate array, a prefix to use for files, and None
+    Return a sample data file, the ancestors file, a corresponding recombination rate
+    (a single number or a RateMap), a prefix to use for files, and None
     """
     map = args.genetic_map
     sd = tsinfer.load(base_filename + ".samples")
@@ -492,20 +285,17 @@ def setup_sample_file(base_filename, args, num_threads=1):
     if match or map is not None:
         if map is not None:
             logger.info(f"Using {map} for the recombination map")
-            chr_map = msprime.RecombinationMap.read_hapmap(map)
+            rho = intervals.read_hapmap(map)
         else:
             chr = match.group(1)
             logger.info(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
             map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
             if not map.is_cached():
                 map.download()
-            chr_map = map.get_chromosome_map(chr)
-        inference_distances = physical_to_genetic(chr_map, inference_pos)
-        d = np.diff(inference_distances)
+            filename = os.path.join(gmap.map_cache_dir, gmap.file_pattern.format(id=chr))
+            rho = intervals.read_hapmap(filename)
     else:
-        inference_distances = sd.sites_position[:][sd.sites_inference]
-        d = np.diff(inference_distances)/sd.sequence_length
-    rho = np.concatenate(([0.0], d))
+        rho = 1e-8  # shouldn't matter what this is - it it relative to mismatch
         
     if np.any(d==0):
         w = np.where(d==0)
@@ -516,7 +306,7 @@ def setup_sample_file(base_filename, args, num_threads=1):
 # Parameters passed to each subprocess
 Params = collections.namedtuple(
     "Params",
-    "ts_file, sample_file, anc_file, rec_rate, ma_mis_rate, ms_mis_rate, precision, "
+    "ts_file, sample_file, anc_file, rec_rate, ma_mis_ratio, ms_mis_ratio, precision, "
     "num_threads, kc_max, kc_max_split, seed, error, source, skip_existing"
 )
 
@@ -525,25 +315,9 @@ def run(params):
     """
     Run a single inference, with the specified rates
     """
-    rho = params.rec_rate[1:]
-    base_rec_prob = np.quantile(rho, 0.5)
-    if params.precision is None:
-        # Smallest recombination rate
-        min_rho = int(np.ceil(-np.min(np.log10(rho[rho>0]))))
-        # Smallest mean 
-        av_min = int(np.ceil(-np.log10(
-            min(1, params.ma_mis_rate, params.ms_mis_rate) * base_rec_prob)))
-        precision = max(min_rho, av_min) + 3
-    else:
-        precision = params.precision
-    ma_mis = base_rec_prob * params.ma_mis_rate
-    ms_mis = base_rec_prob * params.ms_mis_rate
+    precision = params.precision
     logger.info(
-        f"Starting {params.ma_mis_rate} {params.ms_mis_rate} " +
-        f"with base rho {base_rec_prob:.5g} " +
-        f"(mean {np.mean(rho):.4g} median {np.quantile(rho, 0.5):.4g} " +
-        f"min {np.min(rho):.4g}, 2.5% quantile {np.quantile(rho, 0.025):.4g}) " +
-        f"precision {precision}"
+        f"Starting {params.ma_mis_ratio} {params.ms_mis_ratio}. Precision {precision}"
     )
     prefix = None
     assert params.sample_file.endswith(".samples")
@@ -554,8 +328,8 @@ def run(params):
     prefix = params.sample_file[0:-len(".samples")]
     inf_prefix = "{}_rma{:g}_rms{:g}_p{}".format(
             prefix,
-            params.ma_mis_rate,
-            params.ms_mis_rate,
+            params.ma_mis_ratio,
+            params.ms_mis_ratio,
             precision)
 
     ats_path = inf_prefix + ".atrees"
@@ -582,9 +356,9 @@ def run(params):
             num_threads=params.num_threads,
             precision=precision,
             recombination_rate=params.rec_rate,
-            mismatch_rate=ma_mis)
+            mismatch_ratio=params.ma_mis_ratio)
         inferred_anc_ts.dump(ats_path)
-        logger.info(f"MA done: rel/abs_ma_mis rate = {params.ma_mis_rate}/{ma_mis}")
+        logger.info(f"MA done: mismatch ratio = {params.ma_mis_ratio}")
 
     ts_path = inf_prefix + ".trees"
     if params.skip_existing and os.path.exists(ts_path):
@@ -608,9 +382,9 @@ def run(params):
         num_threads=params.num_threads,
         precision=precision,
         recombination_rate=params.rec_rate,
-        mismatch_rate=ms_mis)
+        mismatch_ratio=params.ms_mis_ratio)
     process_time = time.process_time() - start_time
-    logger.info(f"MS done: rel/abs_ms_mis rate = {params.ms_mis_rate}/{ms_mis}")
+    logger.info(f"MS done: mismatch ratio = {params.ms_mis_ratio}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -641,17 +415,21 @@ def run(params):
                 keep_unary=True, reduce_to_site_topology=True, filter_sites=False).nbytes
             kc_poly = simplified_inferred_ts.kc_distance(simulated_ts)
             logger.debug("KC poly calculated")
-            polytomies_split_ts = simplified_inferred_ts.randomly_split_polytomies(
-                random_seed=params.seed)
-            logger.debug("Polytomies split for KC calc")
-            kc_split = polytomies_split_ts.kc_distance(simulated_ts)
+            kc_split = 0
+            for interval, orig_tree, new_tree in simulated_ts.coiterate(
+                simplified_inferred_ts, sample_lists=True
+            ):
+                kc_split += interval.span * orig_tree.kc_distance(
+                    new_tree.split_polytomies(
+                        random_seed=int(interval.left),
+                        epsilon=1e-20,  # Smaller epsilon than used in path compression
+                        sample_lists=True))
+            kc_split /= simulated_ts.sequence_length
             logger.debug("KC split calculated")
         except FileNotFoundError:
             pass
 
     results = {
-        'abs_ma_mis': ma_mis,
-        'abs_ms_mis': ms_mis,
         'arity_mean': arity_mean,
         'arity_var': arity_var,
         'edges': inferred_ts.num_edges,
@@ -666,8 +444,8 @@ def run(params):
         'num_trees': inferred_ts.num_trees,
         'precision': precision,
         'proc_time': process_time,
-        'rel_ma_mis': params.ma_mis_rate,
-        'rel_ms_mis': params.ms_mis_rate,
+        'ma_mis_ratio': params.ma_mis_ratio,
+        'ms_mis_ratio': params.ms_mis_ratio,
         'seed': params.seed,
         'sim_ts_min_bytes': sim_ts_min_bytes,
         'sim_ts_bytes': sim_ts_bytes,
@@ -742,9 +520,9 @@ def run_replicate(rep, args):
         pass
     
     param_iter = [
-        Params(ts_name, sample_file, anc_file, rho, rma, rms, p, **params)
-            for rms in args.match_samples_mismatch
-                for rma in args.match_ancestors_mismatch
+        Params(ts_name, sample_file, anc_file, rho, ma_mr, ms_mr, p, **params)
+            for ms_mr in args.match_samples_mismatch_ratio
+                for ma_mr in args.match_ancestors_mismatch_ratio
                     for p in precision]
     treefiles = []
     results_filename = prefix + "_results.csv"
@@ -786,9 +564,9 @@ if __name__ == "__main__":
 
 
     # Set up the range of params for multiprocessing
-    default_relative_match_samples_mismatch = np.array(
+    default_match_samples_mismatch_ratio = np.array(
         [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 1e-4, 1e-5])
-    default_relative_match_ancestors_mismatch = np.array(
+    default_match_ancestors_mismatch_ratio = np.array(
         [1e4, 1e3, 1e2, 10, 5, 2, 1, 0.5, 0.1, 5e-2, 1e-2, 5e-3, 1e-3, 1e-4, 1e-5])
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -813,14 +591,14 @@ if __name__ == "__main__":
         help="Add sequencing and ancestral state error to the haplotypes before"
             "inferring. The value here gives the probability of ancestral state"
             "error")
-    parser.add_argument("-A", "--match_ancestors_mismatch", nargs='*', type=float,
-        default=default_relative_match_ancestors_mismatch,
+    parser.add_argument("-A", "--match_ancestors_mismatch_ratio", nargs='*', type=float,
+        default=default_match_ancestors_mismatch_ratio,
         help = (
             "A list of values for the relative match_ancestors mismatch rate."
             "The rate is relative to the median recombination rate between sites")
     )
-    parser.add_argument("-S", "--match_samples_mismatch", nargs='*', type=float,
-        default=default_relative_match_samples_mismatch,
+    parser.add_argument("-S", "--match_samples_mismatch_ratio", nargs='*', type=float,
+        default=default_match_samples_mismatch_ratio,
         help =
             "A list of values for the relative match_samples mismatch rate. "
             "The rate is relative to the median recombination rate between sites"

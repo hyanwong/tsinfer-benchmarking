@@ -475,7 +475,7 @@ def run(params):
         stat = rf_distance(orig_ts, cmp_ts, branches_l0)
 
     elif metric == "RFinfo":
-        logging.info(f"Running ts-specific RF code")
+        logging.info(f"Running information RF metric code")
         with NamedTemporaryFile("wt") as f1, NamedTemporaryFile("wt") as f2:
             f1.write(orig_ts.to_nexus(precision=1))
             f2.write(cmp_ts.to_nexus(precision=1))
