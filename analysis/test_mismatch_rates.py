@@ -297,9 +297,9 @@ def setup_sample_file(base_filename, args, num_threads=1):
     else:
         rho = 1e-8  # shouldn't matter what this is - it it relative to mismatch
         
-    if np.any(d==0):
-        w = np.where(d==0)
-        raise ValueError("Zero recombination rates at", w, inference_pos[w])
+    #if np.any(d==0):
+    #    w = np.where(d==0)
+    #    raise ValueError("Zero recombination rates at", w, inference_pos[w])
 
     return sd.path, anc.path, rho, "", None
 
