@@ -269,7 +269,7 @@ def setup_sample_file(base_filename, args, num_threads=1):
     Return a sample data file, the ancestors file, a corresponding recombination rate
     (a single number or a RateMap), a prefix to use for files, and None
     """
-    map = args.genetic_map
+    gmap = args.genetic_map
     sd = tsinfer.load(base_filename + ".samples")
 
     anc = tsinfer.generate_ancestors(
@@ -282,16 +282,16 @@ def setup_sample_file(base_filename, args, num_threads=1):
     inference_pos = anc.sites_position[:]
 
     match = re.search(r'(chr\d+)', base_filename)
-    if match or map is not None:
-        if map is not None:
-            logger.info(f"Using {map} for the recombination map")
-            rho = intervals.read_hapmap(map)
+    if match or gmap is not None:
+        if gmap is not None:
+            logger.info(f"Using {gmap} for the recombination map")
+            rho = intervals.read_hapmap(gmap)
         else:
             chr = match.group(1)
             logger.info(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
-            map = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
-            if not map.is_cached():
-                map.download()
+            gmap = stdpopsim.get_species("HomSap").get_genetic_map(id="HapMapII_GRCh37")
+            if not gmap.is_cached():
+                gmap.download()
             filename = os.path.join(gmap.map_cache_dir, gmap.file_pattern.format(id=chr))
             rho = intervals.read_hapmap(filename)
     else:
