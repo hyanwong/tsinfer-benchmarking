@@ -39,6 +39,9 @@ def make_seq_errors_genotype_model(g, error_probs):
 
 
 def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs):
+    """
+    Return a new sample_data file with added sequencing and ancestral_state error
+    """
     if random_seed is not None:
         np.random.seed(random_seed)
     if sample_data.num_samples % 2 != 0:
@@ -56,7 +59,7 @@ def add_errors(sample_data, ancestral_allele_error=0, random_seed=None, **kwargs
         assert ancestral_allele_error <= 1
         n_bad_sites = round(ancestral_allele_error*sample_data.num_sites)
         # This gives *exactly* a proportion aa_error or bad sites
-        # NB - to to this probabilitistically, use np.binomial(1, e, ts.num_sites)
+        # NB - to do this probabilitistically, use np.binomial(1, e, ts.num_sites)
         aa_error_by_site[0:n_bad_sites] = True
         np.random.shuffle(aa_error_by_site)
     new_sd = sample_data.copy(**kwargs)
