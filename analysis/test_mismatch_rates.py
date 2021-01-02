@@ -422,7 +422,6 @@ def run(params):
                 kc_split += interval.span * orig_tree.kc_distance(
                     new_tree.split_polytomies(
                         random_seed=int(interval.left),
-                        epsilon=1e-20,  # Smaller epsilon than used in path compression
                         sample_lists=True))
             kc_split /= simulated_ts.sequence_length
             logger.debug("KC split calculated")
