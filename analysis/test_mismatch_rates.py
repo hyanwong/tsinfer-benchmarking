@@ -85,13 +85,27 @@ def simulate_stdpopsim(
         )
     r_map = contig.recombination_map
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
-    samples = model.get_samples(*([pop_n] * num_pops))
-    engine = stdpopsim.get_engine('msprime')
-    ts = engine.simulate(
-        model, contig, samples,
-        gene_conversion_rate=r_map.mean_recombination_rate * 10,
-        gene_conversion_track_length=300,
-        seed=seed)
+    # While stdpopsim doesn't allow gene_conversion_rate, call msprime directly
+    demography=msprime.Demography.from_old_style(
+        population_configurations=model.population_configurations,
+        migration_matrix=model.migration_matrix,
+        demographic_events=model.demographic_events,
+    )
+    ts = msprime.sim_mutations(
+        msprime.sim_ancestry(
+            samples={pop.name: pop_n//2 for pop in demography.populations},
+            discrete_genome=False, # For old msprime behaviour
+            demography=demography,
+            recombination_rate=contig.recombination_map.map,
+            gene_conversion_rate=r_map.mean_recombination_rate * 10,
+            gene_conversion_tract_length=300,
+            random_seed=seed,
+            ),
+        rate=contig.mutation_rate,
+        model=msprime.BinaryMutationModel(),
+        discrete_genome=False,
+        random_seed=seed,
+    )
     tables = ts.dump_tables()
     if sample_data is not None:
         pos = sample_data.sites_position[:]
