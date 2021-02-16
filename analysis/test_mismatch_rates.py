@@ -15,7 +15,7 @@ import json
 import msprime
 import tskit
 import numpy as np
-import stdpopsim #  Requires a version of msprime which allows gene conversion
+import stdpopsim
 import tsinfer
 
 from error_generation import add_errors
@@ -87,11 +87,7 @@ def simulate_stdpopsim(
     assert len(r_map.get_rates()) == 2  # Ensure a single rate over chr
     samples = model.get_samples(*([pop_n] * num_pops))
     engine = stdpopsim.get_engine('msprime')
-    ts = engine.simulate(
-        model, contig, samples,
-        gene_conversion_rate=r_map.mean_recombination_rate * 10,
-        gene_conversion_track_length=300,
-        seed=seed)
+    ts = engine.simulate(model, contig, samples, seed=seed)
     tables = ts.dump_tables()
     if sample_data is not None:
         pos = sample_data.sites_position[:]
