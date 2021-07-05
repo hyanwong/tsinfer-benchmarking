@@ -15,10 +15,10 @@ if __name__ == "__main__":
         for line_num, line in enumerate(f):
             fields = line.strip().split(",")
             try:
-                with open(fields[-1]+".RF", "rt") as rf:
+                with open(fields[-1]+".RFinfo", "rt") as rf:
                     new_fields[0] = rf.readline().strip()
             except:
-                new_fields[0] = "" if line_num>0 else "RF"
+                new_fields[0] = "" if line_num>0 else "RFinfo"
             try:
                 with open(fields[-1]+".split.RF", "rt") as rf:
                     new_fields[1] = rf.readline().strip()

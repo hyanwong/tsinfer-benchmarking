@@ -59,7 +59,6 @@ def randomly_split_polytomies(
         new_nodes_by_time_desc have been used to break polytomies. All possible
         topologies should be equiprobable.
         """
-        nonlocal rng
         assert len(child_ids) == len(new_nodes_by_time_desc) + 2
         # Polytomies broken by sequentially splicing onto edges, so an initial edge
         # is required. This will always remain above the top node & is removed later

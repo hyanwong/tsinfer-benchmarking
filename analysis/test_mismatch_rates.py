@@ -292,7 +292,7 @@ def setup_sample_file(base_filename, args, num_threads=1):
             rho = intervals.read_hapmap(filename)
     else:
         rho = 1e-8  # shouldn't matter what this is - it it relative to mismatch
-        
+
     #if np.any(d==0):
     #    w = np.where(d==0)
     #    raise ValueError("Zero recombination rates at", w, inference_pos[w])
@@ -306,6 +306,13 @@ Params = collections.namedtuple(
     "num_threads, kc_max, kc_max_split, seed, error, source, skip_existing"
 )
 
+Results = collections.namedtuple(
+    "Results",
+    "arity_mean, arity_var, edges, error, kc_max_split, kc_max, kc_poly, kc_split, "
+    "muts, n, num_sites, min_num_muts, num_trees, precision, proc_time, "
+    "ma_mis_ratio, ms_mis_ratio, seed, sim_ts_min_bytes, sim_ts_bytes, "
+    "source, ts_bytes, ts_path"
+)
     
 def run(params):
     """
@@ -338,8 +345,8 @@ def run(params):
                 "The loaded ancestors ts does not match the ancestors file. "
                 "Checking the site positions, and will abort if they don't match!")
             # We might be re-running this, but the simulation file is the same
-            # So double-check that the positions in the ats are a subset of those in the
-            # used sample data file
+            # So double-check that the positions in the ancestors ts are a subset of
+            # those in the used sample data file
             assert np.all(np.isin(
                 inferred_anc_ts.tables.sites.position,
                 samples.sites_position[:]))
@@ -352,7 +359,8 @@ def run(params):
             num_threads=params.num_threads,
             precision=precision,
             recombination_rate=params.rec_rate,
-            mismatch_ratio=params.ma_mis_ratio)
+            mismatch_ratio=params.ma_mis_ratio,
+        )
         inferred_anc_ts.dump(ats_path)
         logger.info(f"MA done: mismatch ratio = {params.ma_mis_ratio}")
 
@@ -362,25 +370,30 @@ def run(params):
         inferred_ts = tskit.load(ts_path)
         try:
             user_data = inferred_ts.metadata['user_data']
+            # Check we have all the required user data
+            if set(inferred_ts.metadata['user_data'].keys()) != set(Results._fields):
+                raise ValueError("Non-matching fields")
             try:
                 assert np.allclose(params.kc_max, user_data['kc_max'])
             except (KeyError, TypeError):
                 pass  # could be NaN e.g. if this is real data
             return user_data
         except (TypeError, KeyError):
-            logging.warning("No metadata in {ts_path}: re-inferring these parameters")
-
-    # Otherwise finish off the inference
-    logger.info(f"MS running with {params.num_threads} threads: will save to {ts_path}")
-    inferred_ts = tsinfer.match_samples(
-        samples,
-        inferred_anc_ts,
-        num_threads=params.num_threads,
-        precision=precision,
-        recombination_rate=params.rec_rate,
-        mismatch_ratio=params.ms_mis_ratio)
-    process_time = time.process_time() - start_time
-    logger.info(f"MS done: mismatch ratio = {params.ms_mis_ratio}")
+            logging.warning(f"No metadata in {ts_path}: recalculating")
+        except ValueError:
+            logging.warning(f"Unexpected metadata in {ts_path}: recalculating")
+    else:
+        # Otherwise finish off the inference
+        logger.info(f"MS running with {params.num_threads} threads: will save to {ts_path}")
+        inferred_ts = tsinfer.match_samples(
+            samples,
+            inferred_anc_ts,
+            num_threads=params.num_threads,
+            precision=precision,
+            recombination_rate=params.rec_rate,
+            mismatch_ratio=params.ms_mis_ratio)
+        process_time = time.process_time() - start_time
+        logger.info(f"MS done: mismatch ratio = {params.ms_mis_ratio}")
     simplified_inferred_ts = inferred_ts.simplify()  # Remove unary nodes
     # Calculate mean num children (polytomy-measure) for internal nodes
     nc_sum = 0
@@ -397,14 +410,30 @@ def run(params):
     arity_mean = nc_sum/nc_tot
     arity_var = nc_sum_sq / nc_tot - (arity_mean ** 2) # can't be bothered to adjust for n
     
-    # Calculate span of root nodes in simplified tree
-    
     sim_ts_bytes = sim_ts_min_bytes = None
     kc_poly = kc_split = None
-    
+    min_num_muts = None
+
+    # Calculate measures against the known (simulated) ts, if it exists
     if params.ts_file is not None:
         try:
             simulated_ts = tskit.load(params.ts_file + ".trees")
+
+            logger.info(
+                f"Calculating minimum req. mutations against {ts_path} using parsimony")
+            min_num_muts = 0
+            tree_iter = simulated_ts.trees()
+            tree = next(tree_iter)
+            for v in samples.variants():
+                while v.site.position >= tree.interval.right:
+                    tree = next(tree_iter)
+                anc_state, mutations = tree.map_mutations(
+                    genotypes=v.genotypes,
+                    alleles=v.alleles,
+                    ancestral_state=v.site.ancestral_state,
+                )
+                min_num_muts += len(mutations)
+
             logger.info(f"Calculating KC distances for {ts_path}")
             sim_ts_bytes = simulated_ts.nbytes
             sim_ts_min_bytes = simulated_ts.simplify(
@@ -424,30 +453,31 @@ def run(params):
         except FileNotFoundError:
             pass
 
-    results = {
-        'arity_mean': arity_mean,
-        'arity_var': arity_var,
-        'edges': inferred_ts.num_edges,
-        'error': params.error,
-        'kc_max_split': params.kc_max_split,
-        'kc_max': params.kc_max,
-        'kc_poly': kc_poly,
-        'kc_split': kc_split,
-        'muts': inferred_ts.num_mutations,
-        'n': inferred_ts.num_samples,
-        'num_sites': inferred_ts.num_sites,
-        'num_trees': inferred_ts.num_trees,
-        'precision': precision,
-        'proc_time': process_time,
-        'ma_mis_ratio': params.ma_mis_ratio,
-        'ms_mis_ratio': params.ms_mis_ratio,
-        'seed': params.seed,
-        'sim_ts_min_bytes': sim_ts_min_bytes,
-        'sim_ts_bytes': sim_ts_bytes,
-        'source': params.source,
-        'ts_bytes': inferred_ts.nbytes,
-        'ts_path': ts_path,
-    }
+    results = Results(
+        arity_mean=arity_mean,
+        arity_var=arity_var,
+        edges=inferred_ts.num_edges,
+        error=params.error,
+        kc_max_split=params.kc_max_split,
+        kc_max=params.kc_max,
+        kc_poly=kc_poly,
+        kc_split=kc_split,
+        muts=inferred_ts.num_mutations,
+        n=inferred_ts.num_samples,
+        num_sites=inferred_ts.num_sites,
+        min_num_muts=min_num_muts,
+        num_trees=inferred_ts.num_trees,
+        precision=precision,
+        proc_time=process_time,
+        ma_mis_ratio=params.ma_mis_ratio,
+        ms_mis_ratio=params.ms_mis_ratio,
+        seed=params.seed,
+        sim_ts_min_bytes=sim_ts_min_bytes,
+        sim_ts_bytes=sim_ts_bytes,
+        source=params.source,
+        ts_bytes=inferred_ts.nbytes,
+        ts_path=ts_path,
+    )
     # Save the results into the ts metadata - this should allow us to reconstruct the
     # results table should anything go awry, or if we need to add more
     tables = inferred_ts.dump_tables()
@@ -456,7 +486,7 @@ def run(params):
             raise RuntimeError("Metadata already exists in the ts, and is not JSON")
         tables.metadata_schema = tskit.MetadataSchema({"codec":"json"})
         tables.metadata = {}
-    tables.metadata = {"user_data": results, **tables.metadata}
+    tables.metadata = {**tables.metadata, "user_data": results._asdict()}
     tables.tree_sequence().dump(ts_path)
     return results
 
@@ -616,7 +646,7 @@ if __name__ == "__main__":
             "probability in regions where there is a true breakpoint")
     parser.add_argument("-k", "--skip_existing_params", action='store_true',
         help=
-            "If inference files exists with the same name, assume they skip the inference ")
+            "If inference files exists with the same name, skip the inference ")
     parser.add_argument("-t", "--num_threads", type=int, default=2,
         help=
             "The number of threads to use in each inference subprocess. "
