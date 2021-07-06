@@ -156,7 +156,7 @@ def simulate_stdpopsim(
             raise RuntimeError("Metadata already exists, and is not JSON")
         tables.metadata_schema = tskit.MetadataSchema({"codec":"json"})
         tables.metadata = {}
-    tables.metadata = {"user_data": user_data, **tables.metadata}
+    tables.metadata = { **tables.metadata, "user_data": user_data}
     tables.tree_sequence().dump(tree_fn + ".trees")
     return base_fn, tree_fn
 
@@ -309,8 +309,8 @@ Params = collections.namedtuple(
 Results = collections.namedtuple(
     "Results",
     "arity_mean, arity_var, edges, error, kc_max_split, kc_max, kc_poly, kc_split, "
-    "muts, n, num_sites, min_num_muts, num_trees, precision, proc_time, "
-    "ma_mis_ratio, ms_mis_ratio, seed, sim_ts_min_bytes, sim_ts_bytes, "
+    "muts, n, num_sites, min_num_muts, revised_num_muts, num_trees, precision, "
+    "proc_time, ma_mis_ratio, ms_mis_ratio, seed, sim_ts_min_bytes, sim_ts_bytes, "
     "source, ts_bytes, ts_path"
 )
     
@@ -370,6 +370,7 @@ def run(params):
         inferred_ts = tskit.load(ts_path)
         try:
             user_data = inferred_ts.metadata['user_data']
+            process_time = user_data.get("proc_time", None)
             # Check we have all the required user data
             if set(inferred_ts.metadata['user_data'].keys()) != set(Results._fields):
                 raise ValueError("Non-matching fields")
@@ -399,8 +400,16 @@ def run(params):
     nc_sum = 0
     nc_sum_sq = 0
     nc_tot = 0
+    # Number of mutations after removing muts above samples for multi-mutation sites
+    revised_num_muts = 0
+    smp_set = set(simplified_inferred_ts.samples())
     root_lengths = collections.defaultdict(float)
     for tree in simplified_inferred_ts.trees():
+        for site in tree.sites():
+            if len(site.mutations) == 1:
+                revised_num_muts += 1
+            else:
+                revised_num_muts += len([m for m in site.mutations if m.node in smp_set])
         for n in tree.nodes():
             n_children = tree.num_children(n)
             if n_children > 0:  # exclude leaves/samples
@@ -466,6 +475,7 @@ def run(params):
         n=inferred_ts.num_samples,
         num_sites=inferred_ts.num_sites,
         min_num_muts=min_num_muts,
+        revised_num_muts=revised_num_muts,
         num_trees=inferred_ts.num_trees,
         precision=precision,
         proc_time=process_time,
@@ -488,7 +498,7 @@ def run(params):
         tables.metadata = {}
     tables.metadata = {**tables.metadata, "user_data": results._asdict()}
     tables.tree_sequence().dump(ts_path)
-    return results
+    return results._asdict()
 
 
 def run_replicate(rep, args):
