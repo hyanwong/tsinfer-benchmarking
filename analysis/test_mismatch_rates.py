@@ -280,8 +280,12 @@ def setup_sample_file(base_filename, args, num_threads=1):
     match = re.search(r'(chr\d+)', base_filename)
     if match or gmap is not None:
         if gmap is not None:
-            logger.info(f"Using {gmap} for the recombination map")
-            rho = intervals.read_hapmap(gmap)
+            try:
+                rho=float(gmap)
+                logger.info(f"Using rate {gmap} for the recombination rate")
+            except ValueError:
+                rho = intervals.read_hapmap(gmap)
+                logger.info(f"Using file from {gmap} for the recombination map")
         else:
             chr = match.group(1)
             logger.info(f"Using {chr} from HapMapII_GRCh37 for the recombination map")
@@ -667,7 +671,8 @@ if __name__ == "__main__":
             "under different parameter values."
     )
     parser.add_argument("-m", "--genetic_map", default=None,
-        help="An alternative genetic map to be used for this analysis, in the format"
+        help="An alternative recombination rate (if numeric) or genetic map (if a path"
+            "to a file) to be used for this analysis, in the format"
             "expected by msprime.RecombinationMap.read_hapmap")
     parser.add_argument("-v", "--verbosity", action="count", default=0,
         help="Increase the verbosity")
